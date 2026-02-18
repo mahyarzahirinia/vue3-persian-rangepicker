@@ -1,3 +1,1337 @@
+<script setup lang="ts">
+  /**
+   * TODO: use scoped slots
+   * TODO: add time config
+   * TODO: add tip for days
+   * TODO: test the project with attention and test in nuxt
+   * TODO: refactor and write comment --> pay a high attention
+   */
+
+  import {
+    computed,
+    nextTick,
+    onBeforeMount,
+    onMounted,
+    onUnmounted,
+    reactive,
+    ref,
+    watch,
+    watchEffect,
+    useAttrs,
+  } from 'vue';
+
+  // ************************ Core ************************
+  import { PersianDate, Core } from './utils/modules/core';
+
+  // ************************ Types ************************
+  import type {
+    Obj,
+    Attrs,
+    Langs,
+    RecursivePartial,
+    Styles,
+    Inputs,
+    PickerPlace,
+    TypePart,
+    CalendarPart,
+    Disable,
+    Formats,
+    MonthDays,
+    Months,
+    Shortcuts,
+    DefaultDate,
+    DatePickerProps,
+    Mode,
+    Color,
+    PickerType,
+  } from './types';
+
+  // ************************ Components ************************
+  import PDPArrow from './utils/components/PDPArrow.vue';
+  import PDPIcon from './utils/components/PDPIcon.vue';
+  import PDPAlt from './utils/components/PDPAlt.vue';
+
+  defineOptions({
+    name: 'ZahiriniyaRangePicker',
+    inheritAttrs: false,
+  });
+
+  const props = withDefaults(defineProps<DatePickerProps>(), {
+    type: 'date',
+    show: false,
+    clickOn: 'all',
+    modal: false,
+    column: () => ({ 576: 1 }),
+    autoSubmit: true,
+    mode: 'range',
+    locale: 'fa',
+    clearable: false,
+    dualInput: false,
+    iconInside: false,
+    shortcut: false,
+  });
+
+  const emit = defineEmits<{
+    (e: 'open'): void;
+    (e: 'close'): void;
+    (e: 'select', date: PersianDate): void;
+    (e: 'submit', date: PersianDate | PersianDate[]): void;
+    (e: 'clear'): void;
+    (
+      e: 'update:modelValue',
+      value:
+        | string
+        | string[]
+        | null
+        | (string | null)[]
+        | PersianDate
+        | PersianDate[],
+    ): void;
+  }>();
+
+  const isClient: boolean = typeof window !== 'undefined';
+  const rawAttrs = useAttrs() as Record<string, unknown>;
+
+  // -------------------- template refs --------------------
+  const root = ref<HTMLElement | null>(null);
+  const inputsRef = ref<HTMLInputElement[]>([]);
+  const pdpPicker = ref<HTMLElement | null>(null);
+  const pdpSelectYear = ref<HTMLElement | null>(null);
+  const pdpMain = ref<HTMLElement | null>(null);
+
+  // -------------------- state --------------------
+  const core = ref<PersianDate>(new PersianDate());
+  const onDisplay = ref<PersianDate | undefined>(undefined);
+  const fromDate = ref<PersianDate | undefined>(undefined);
+  const toDate = ref<PersianDate | undefined>(undefined);
+
+  const selectedDates = ref<PersianDate[]>([]);
+  const selectedTimes = ref<PersianDate[]>([]);
+
+  const showDatePicker = ref<boolean>(false);
+  const showYearSelect = ref<boolean>(false);
+  const showMonthSelect = ref<boolean>(false);
+  // const showTopOfInput = ref<boolean>(false);
+
+  const displayValue = ref<string[]>([]);
+  const inputName = ref<Inputs>('firstInput');
+
+  const pickerPlace = reactive<PickerPlace>({
+    top: false,
+    left: false,
+    right: false,
+  });
+
+  const documentWidth = ref<number>(
+    isClient ? window.innerWidth : Number.POSITIVE_INFINITY,
+  );
+
+  const langs = ref<Langs>(Core.langs as Langs);
+  const currentLocale = ref<string>(props.locale.split(',')[0]);
+
+  const interval = ref<ReturnType<typeof setInterval> | null>(null);
+  const submitedValue = ref<PersianDate[]>([]);
+
+  // -------------------- derived defaults --------------------
+  const effectiveFrom = computed<string>(() => {
+    if (typeof props.from === 'string') return props.from;
+    return props.type === 'time' ? '' : '1300';
+  });
+
+  const effectiveTo = computed<string>(() => {
+    if (typeof props.to === 'string') return props.to;
+    return props.type === 'time' ? '23:59' : '1499';
+  });
+
+  // -------------------- computed --------------------
+  const lang = computed<Langs[string]>(() => langs.value[currentLocale.value]);
+
+  const attrs = computed<Attrs>(() => {
+    const a: Attrs = {
+      div: { class: 'pdp-group' },
+      label: { class: 'pdp-label' },
+      alt: {},
+      picker: { class: 'pdp-picker' },
+      firstInput: { class: 'pdp-input' },
+      secondInput: { class: 'pdp-input' },
+    };
+
+    for (const key in rawAttrs) {
+      try {
+        const match = key.match(
+          /(div|label|alt|picker|firstInput|secondInput)-(.*)/,
+        ) as RegExpMatchArray | null;
+
+        if (!match) throw new Error('no match');
+
+        const group = match[1] as keyof Attrs;
+        const attr = match[2] as string;
+
+        // Vue attrs are unknown here; we forward them as-is.
+        (a[group] as Record<string, unknown>)[attr] = rawAttrs[key];
+      } catch {
+        (a.firstInput as Record<string, unknown>)[key] = rawAttrs[key];
+      }
+    }
+
+    a.picker.class = [
+      a.picker.class,
+      {
+        'pdp-top': !!pickerPlace.top,
+        'pdp-left': !!pickerPlace.left,
+        'pdp-right': !!pickerPlace.right,
+      },
+      lang.value.dir.picker,
+    ];
+
+    if (props.mode === 'single' && props.dualInput) {
+      (a.secondInput as Record<string, unknown>).disabled = 'disabled';
+    }
+
+    if (showDatePicker.value) {
+      a[inputName.value].class = `${a[inputName.value].class} pdp-focus`;
+    }
+
+    return a;
+  });
+
+  const years = computed<number[]>(() => {
+    if (!fromDate.value || !toDate.value) return [];
+    let start: number = fromDate.value.year();
+    const end: number = toDate.value.year();
+    return Array(end - start + 1)
+      .fill(null)
+      .map(() => start++);
+  });
+
+  const columnCount = computed<number>(() => {
+    let col = 2;
+
+    if (Core.isNumber(props.column)) {
+      col = props.column as number;
+    } else {
+      const bp = Object.keys(props.column)
+        .sort((a, b) => +a - +b)
+        .find((k) => documentWidth.value <= +k);
+
+      if (bp) col = (props.column as Record<number, number>)[+bp] as number;
+    }
+
+    return col;
+  });
+
+  // side-effect: time scale css var
+  watchEffect(() => {
+    if (!root.value) return;
+    if (!props.type.includes('time')) return;
+
+    const scale = columnCount.value / (props.mode === 'single' ? 1 : 2);
+    root.value.style.setProperty('--time-scale', String(scale > 1 ? scale : 1));
+  });
+
+  const monthDays = computed<MonthDays[][][]>(() => {
+    if (!onDisplay.value) return [];
+
+    const monthsArr: MonthDays[][][] = [];
+
+    for (let i = 0; i < columnCount.value; i++) {
+      const selectedYear = onDisplay.value.clone().addMonth(i).year();
+      const selectedMonth = onDisplay.value.clone().addMonth(i).month();
+
+      let emptyCells = +onDisplay.value
+        .clone()
+        .parse(selectedYear, selectedMonth, 1)
+        .toString('?d');
+
+      let daysOfMonthNumber = onDisplay.value.getDaysInMonth(
+        selectedYear,
+        selectedMonth,
+      );
+      const numberOfWeek = Math.ceil((daysOfMonthNumber + emptyCells) / 7);
+
+      const month: MonthDays[][] = [];
+      let showDay = 1;
+
+      for (let week = 0; week < numberOfWeek; week++) {
+        month[week] = [];
+
+        for (let day = 0; day < 7; day++) {
+          if (emptyCells) {
+            month[week][day] = { empty: true };
+            emptyCells--;
+            continue;
+          }
+
+          if (daysOfMonthNumber) {
+            const raw = onDisplay.value.clone().addMonth(i).date(showDay);
+            const inRange =
+              selectedDates.value.length === 2 &&
+              core.value
+                .clone()
+                .parse(selectedYear, selectedMonth, showDay)
+                .isBetween(
+                  ...(selectedDates.value.map((d) => d.toString()) as [
+                    string,
+                    string,
+                  ]),
+                );
+
+            month[week][day] = {
+              friday: day === 6,
+              raw,
+              startRange:
+                !!selectedDates.value[0] &&
+                selectedDates.value[0].isSame(
+                  selectedYear,
+                  selectedMonth,
+                  showDay,
+                ),
+              endRange:
+                !!selectedDates.value[1] &&
+                selectedDates.value[1].isSame(
+                  selectedYear,
+                  selectedMonth,
+                  showDay,
+                ),
+              inRange,
+              disabled: !checkDate(raw, 'date') || isInDisable(raw),
+              today: core.value
+                .clone()
+                .isSame(selectedYear, selectedMonth, showDay),
+              val: showDay++,
+            };
+
+            daysOfMonthNumber--;
+          } else {
+            month[week][day] = { empty: true };
+          }
+        }
+      }
+
+      monthsArr.push(month);
+    }
+
+    return monthsArr;
+  });
+
+  const months = computed<Months>(() => {
+    if (!onDisplay.value) return {} as Months;
+
+    const m: Months = {} as Months;
+    for (let i = 1; i <= 12; i++) {
+      m[i] = {
+        label: lang.value.months[i - 1],
+        selected: onDisplay.value.month() === i,
+        disabled: !checkDate(onDisplay.value.clone().month(i), 'month'),
+      };
+    }
+    return m;
+  });
+
+  const nextLocale = computed<string>(() => {
+    const locales = props.locale.split(',');
+    const index = locales.indexOf(currentLocale.value);
+    const locale = locales[index + 1] || locales[0];
+    return langs.value[locale].translations.label;
+  });
+
+  const formats = computed<Formats>(() => {
+    const displayFormatMap: Obj<string, TypePart | 'datetime'> = {
+      date: '?D ?MMMM',
+      datetime: '?D ?MMMM HH:mm',
+      time: 'HH:mm',
+    };
+    const modelFormatMap: Obj<string, TypePart | 'datetime'> = {
+      date: 'YYYY-MM-DD',
+      datetime: 'YYYY-MM-DD HH:mm',
+      time: 'HH:mm',
+    };
+
+    return {
+      model: props.format || modelFormatMap[props.type],
+      input: props.inputFormat || lang.value.inputFormat || props.type,
+      display:
+        props.displayFormat ||
+        lang.value.displayFormat ||
+        displayFormatMap[props.type],
+      alt:
+        (attrs.value.alt.format as string) ||
+        props.format ||
+        modelFormatMap[props.type],
+    };
+  });
+
+  const defaultDate = computed<DefaultDate>(() => {
+    const prefix =
+      props.type === 'time' ? `${core.value.toString('jYYYY/jMM/jDD')} ` : '';
+
+    return {
+      from: prefix + effectiveFrom.value,
+      to: prefix + effectiveTo.value,
+    };
+  });
+
+  const inputs = computed<Inputs[]>(() =>
+    !props.dualInput ? ['firstInput'] : ['firstInput', 'secondInput'],
+  );
+
+  const tabIndex = computed<number | undefined>(() => {
+    const t = Number(
+      (attrs.value.secondInput.tabindex || attrs.value.firstInput.tabindex) ??
+        NaN,
+    );
+    return Number.isFinite(t) ? t + 1 : undefined;
+  });
+
+  const shortcuts = computed<Shortcuts | false>(() => {
+    if (!props.shortcut) return false;
+    if (!fromDate.value || !toDate.value) return false;
+
+    const out: Shortcuts = {};
+    const part: 'date' | 'time' = props.type.includes('date') ? 'date' : 'time';
+
+    let d: PersianDate = core.value.clone().now();
+    if (part === 'time' && !validate(d, part)) {
+      d = toDate.value.clone().subDay().now();
+    }
+
+    const checkDates = (dates: PersianDate[]): boolean => {
+      return props.mode === 'single'
+        ? validate(dates[0], part)
+        : dates.some((x) => validate(x, part)) &&
+            !isDisableBetween(dates[0], dates[1]);
+    };
+
+    const setShortcut = (obj: Shortcuts, fromProps = false): void => {
+      for (const phrase in obj) {
+        const dates = fromProps
+          ? obj[phrase].map((date: PersianDate) =>
+              part === 'date'
+                ? d.clone().fromJalali(date)
+                : d.clone().time(date),
+            )
+          : obj[phrase];
+
+        if (checkDates(dates)) {
+          out[phrase] =
+            props.type === 'date' ? dates.map((x) => x.startOf('date')) : dates;
+        }
+      }
+    };
+
+    if (props.shortcut === true) {
+      const s = Core.getShortcuts(
+        d,
+        `${part}-${props.mode}`,
+        lang.value.translations,
+      );
+      if (s) setShortcut(s);
+    } else {
+      setShortcut(props.shortcut, true);
+    }
+
+    return out;
+  });
+
+  // -------------------- watchers --------------------
+  watch(
+    () => props.show,
+    (val: boolean) => {
+      showDatePicker.value = val;
+    },
+  );
+
+  watch(
+    () => showDatePicker.value,
+    (val: boolean) => {
+      if (val) {
+        emit('open');
+      } else {
+        if (!props.modal) document.removeEventListener('scroll', locate);
+        emit('close');
+      }
+    },
+  );
+
+  watch(
+    () => effectiveFrom.value,
+    (val: string) => {
+      if (fromDate.value) fromDate.value.fromJalali(val);
+    },
+  );
+
+  watch(
+    () => effectiveTo.value,
+    (val: string) => {
+      if (toDate.value) toDate.value.fromJalali(val);
+    },
+  );
+
+  watch(
+    () => props.mode,
+    (val: Mode) => {
+      if (val === 'single' && selectedDates.value.length === 2)
+        selectedDates.value.pop();
+    },
+  );
+
+  watch(
+    () => props.locale,
+    (val: string, oldVal: string) => {
+      const index = oldVal.split(',').indexOf(currentLocale.value);
+      currentLocale.value = val.split(',')[index] || val.split(',')[0];
+    },
+  );
+
+  watch(
+    () => props.localeConfig,
+    (val: RecursivePartial<Langs> | undefined) => {
+      if (!val) return;
+      langs.value = Core.mergeObject(langs.value, val) as Langs;
+    },
+    { deep: true },
+  );
+
+  watch(
+    () => props.styles,
+    (val: Styles | undefined) => {
+      if (!val || !root.value) return;
+      Core.setStyles(val, root.value);
+    },
+    { deep: true },
+  );
+
+  watch(
+    () => props.color,
+    (val: Color | undefined) => {
+      if (!root.value) return;
+      Core.setColor(val, root.value);
+    },
+  );
+
+  // -------------------- lifecycle --------------------
+  onBeforeMount(() => {
+    langs.value = Core.mergeObject(langs.value, props.localeConfig) as Langs;
+  });
+
+  const onResize = (): void => {
+    documentWidth.value = window.innerWidth;
+  };
+
+  onMounted(() => {
+    if (root.value) {
+      Core.setColor(props.color, root.value);
+      Core.setStyles(props.styles, root.value);
+    }
+
+    const calendar = lang.value.calendar;
+
+    fromDate.value = core.value
+      .clone()
+      .parse(defaultDate.value.from)
+      .calendar(calendar);
+
+    toDate.value = core.value
+      .clone()
+      .parse(defaultDate.value.to)
+      .endOf(Core.getLastUnit(effectiveTo.value, props.type))
+      .calendar(calendar);
+
+    core.value.calendar(calendar);
+
+    // initial modelValue
+    const val = props.modelValue;
+    if (val) {
+      setDate(val);
+    } else {
+      const today = core.value.clone();
+      if (props.type === 'date') today.startOf('date');
+
+      if (checkDate(today, 'date')) {
+        onDisplay.value = today;
+      } else {
+        onDisplay.value = nearestDate(today).startOf('date');
+      }
+    }
+
+    if (isClient) {
+      window.addEventListener('resize', onResize);
+    }
+
+    if (props.type !== 'date' && onDisplay.value) {
+      onDisplay.value.time(core.value as PersianDate);
+    }
+
+    showDatePicker.value = props.show;
+  });
+
+  onUnmounted(() => {
+    if (isClient) window.removeEventListener('resize', onResize);
+    document.removeEventListener('scroll', locate);
+    stopChangeTime();
+  });
+
+  // -------------------- functions (methods) --------------------
+  function showPart(part: CalendarPart): void {
+    if (part === 'year') {
+      showMonthSelect.value = false;
+      showYearSelect.value = !showYearSelect.value;
+
+      if (showYearSelect.value) {
+        void nextTick(() => {
+          const container = pdpSelectYear.value;
+          if (!container) return;
+
+          const selected = container.querySelector(
+            'li.selected',
+          ) as HTMLLIElement | null;
+          if (!selected) return;
+
+          container.scroll({
+            top: selected.offsetTop,
+            behavior: 'smooth',
+          });
+        });
+      }
+    } else if (part === 'month') {
+      showYearSelect.value = false;
+      showMonthSelect.value = !showMonthSelect.value;
+    }
+  }
+
+  function changeSelectedMonth(month: 'add' | 'sub' | number): void {
+    if (!onDisplay.value) return;
+
+    const clone = onDisplay.value.clone();
+
+    if (month === 'add') onDisplay.value.addMonth();
+    else if (month === 'sub') onDisplay.value.subMonth();
+    else onDisplay.value.month(month);
+
+    if (checkDate(onDisplay.value, 'month')) showMonthSelect.value = false;
+    else onDisplay.value = clone;
+  }
+
+  function changeSelectedYear(year: number): void {
+    if (!onDisplay.value) return;
+
+    onDisplay.value.year(year);
+    if (!checkDate(onDisplay.value, 'date'))
+      onDisplay.value = nearestDate(onDisplay.value);
+    showYearSelect.value = false;
+  }
+
+  function validate(date: PersianDate, part: TypePart): boolean {
+    if (!checkDate(date, part) || isInDisable(date)) return false;
+    return true;
+  }
+
+  function isDisableBetween(first: PersianDate, second: PersianDate): boolean {
+    if (!props.disable) return false;
+    if (!fromDate.value || !toDate.value) return false;
+
+    if (props.type !== 'datetime' && Core.isString(props.disable)) {
+      const d =
+        props.type === 'time'
+          ? second.clone().time(props.disable as string)
+          : (props.disable as string);
+      return core.value
+        .clone()
+        .parse(d as PersianDate | string)
+        .isBetween(first.toString(), second.toString());
+    }
+
+    if (
+      props.type !== 'datetime' &&
+      Array.isArray(props.disable) &&
+      props.disable.some((x) => Core.isString(x))
+    ) {
+      return props.disable.some((x) => {
+        let v = x;
+        if (props.type === 'time') {
+          v = second
+            .clone()
+            .time(v as string)
+            .toString();
+        }
+        return core.value
+          .clone()
+          .parse(v as string)
+          .isBetween(first, second);
+      });
+    }
+
+    if (props.type !== 'time') {
+      const inRangeDate = second.clone().startOf('date').subDay();
+      while (!inRangeDate.isSameOrBefore(first)) {
+        if (isInDisable(inRangeDate)) return true;
+        inRangeDate.subDay();
+      }
+    }
+
+    return false;
+  }
+
+  function selectDate(date: PersianDate, part: TypePart): number {
+    let isValid = validate(date, part);
+    if (!isValid) return -1;
+
+    if (props.mode === 'range' && selectedDates.value.length === 1) {
+      isValid = !isDisableBetween(selectedDates.value[0] as PersianDate, date);
+      if (!isValid) return -2;
+    }
+
+    if (props.type === 'date') date.startOf('date');
+
+    if (props.mode === 'single') {
+      selectedDates.value = [date];
+    } else {
+      // range
+      pdpMain.value?.addEventListener('mouseover', (e) =>
+        selectInRangeDate({ target: e.target }),
+      );
+
+      if (selectedDates.value.length === 0) {
+        selectedDates.value[0] = date;
+        inputName.value = 'secondInput';
+      } else if (inputName.value === 'secondInput') {
+        inputName.value = 'firstInput';
+
+        if (!date.isBefore(selectedDates.value[0] as PersianDate)) {
+          selectedDates.value[1] = date;
+        } else {
+          if (selectedDates.value.length === 1)
+            selectedDates.value.unshift(date);
+          else {
+            selectedDates.value = [date];
+            inputName.value = 'secondInput';
+          }
+        }
+      } else {
+        selectedDates.value = [date];
+        inputName.value = 'secondInput';
+      }
+
+      if (selectedDates.value.length === 2) {
+        pdpMain.value?.removeEventListener('mouseover', (e) =>
+          selectInRangeDate({ target: e.target }),
+        );
+      }
+    }
+
+    if (props.type === 'datetime') {
+      selectedDates.value = selectedDates.value.map((d, i) => {
+        if (selectedTimes.value[i])
+          d.time(selectedTimes.value[i] as PersianDate);
+        selectedTimes.value[i] = d;
+        return d;
+      });
+    }
+
+    emit('select', date);
+
+    if (
+      props.autoSubmit &&
+      (props.mode !== 'range' ||
+        (props.mode === 'range' && selectedDates.value.length === 2))
+    ) {
+      submitDate();
+      return 1;
+    }
+
+    return 0;
+  }
+
+  function setModel(
+    date?:
+      | PersianDate
+      | PersianDate[]
+      | string
+      | string[]
+      | null
+      | (string | null)[],
+  ): void {
+    if (date === undefined) {
+      const d = selectedDates.value.map((el) =>
+        el.toString(formats.value.model),
+      );
+      date = props.mode === 'single' ? d[0] : d;
+    }
+    emit('update:modelValue', date);
+  }
+
+  function goToToday(): void {
+    showMonthSelect.value = false;
+    showYearSelect.value = false;
+
+    onDisplay.value = core.value.now().clone();
+
+    if (
+      props.type.includes('time') &&
+      selectedDates.value.length &&
+      onDisplay.value
+    ) {
+      const lastIndex = selectedDates.value.length - 1;
+      const time = selectedDates.value[lastIndex];
+      time.time(onDisplay.value as PersianDate);
+
+      if (selectedTimes.value[lastIndex])
+        selectedTimes.value[lastIndex] = time.clone();
+
+      if (props.autoSubmit && checkDate(time, 'time') && !isInDisable(time)) {
+        submitDate(false);
+      }
+    }
+
+    if (props.type.includes('date')) {
+      void nextTick(() => {
+        const el = document.querySelector(
+          '.pdp-day.today',
+        ) as HTMLElement | null;
+        if (!el) return;
+        el.classList.add('tada');
+        setTimeout(() => el.classList.remove('tada'), 1000);
+      });
+    }
+  }
+
+  function checkDate(date: unknown, part: CalendarPart | TypePart): boolean {
+    if (!fromDate.value || !toDate.value) return false;
+
+    let d: PersianDate;
+    if (!Core.isPersianDate(date)) {
+      d = core.value.clone().parse(date as PersianDate);
+    } else {
+      d = date as PersianDate;
+    }
+
+    let from: string;
+    let to: string;
+
+    switch (part) {
+      case 'year':
+        from = fromDate.value.toString('?YYYY');
+        to = toDate.value.toString('?YYYY');
+        break;
+      case 'month':
+        from = fromDate.value.toString('?YYYY/?MM');
+        to = toDate.value.toString('?YYYY/?MM');
+        break;
+      case 'date':
+        from = fromDate.value.toString();
+        to = toDate.value.toString();
+        break;
+      case 'time':
+        from = fromDate.value.toString(
+          props.type.includes('time') ? 'datetime' : 'date',
+        );
+        to = toDate.value.toString(
+          props.type.includes('time') ? 'datetime' : 'date',
+        );
+        break;
+    }
+
+    return d.isBetween(from, to, '[]');
+  }
+
+  function isInDisable(date: PersianDate, disable?: Disable): boolean {
+    if (!props.disable) return false;
+
+    const dis: Disable = disable ?? props.disable;
+
+    const d = Core.isPersianDate(date)
+      ? date.clone()
+      : core.value.clone().parse(date);
+
+    if (Core.isString(dis)) {
+      const s = props.type === 'time' ? `${d.toString()} ${dis}` : dis;
+      return d.calendar('jalali').isSame(s as string);
+    }
+
+    if (dis instanceof RegExp) {
+      const f: Record<PickerType, string> = {
+        date: 'jYYYY/jM/jD',
+        datetime: 'jYYYY/jM/jD H:m',
+        time: 'H:m',
+      };
+      return dis.test(d.toString(f[props.type]));
+    }
+
+    if (Core.isFunction(dis)) {
+      return (dis as (x: PersianDate) => boolean)(d);
+    }
+
+    if (Array.isArray(dis)) {
+      return dis.some((val) => {
+        if (Core.isString(val)) {
+          const s = props.type === 'time' ? `${d.toString()} ${val}` : val;
+          return d.calendar('jalali').isSame(s as string);
+        }
+        if (val instanceof RegExp) {
+          const f: Record<PickerType, string> = {
+            date: 'jYYYY/jM/jD',
+            datetime: 'jYYYY/jM/jD H:m',
+            time: 'H:m',
+          };
+          return val.test(d.toString(f[props.type]));
+        }
+        return false;
+      });
+    }
+
+    return false;
+  }
+
+  function showPicker(el: 'icon' | 'input', index: 0 | 1): void {
+    if (props.clickOn !== 'all' && props.clickOn !== el) return;
+
+    const name = inputs.value[index];
+    if (props.dualInput) inputName.value = name;
+
+    const inputEl = inputsRef.value[index];
+    inputEl?.focus();
+
+    showDatePicker.value = true;
+
+    if (!props.modal) {
+      void nextTick(() => locate());
+      document.addEventListener('scroll', locate);
+    }
+  }
+
+  async function selectWithArrow(e: KeyboardEvent): Promise<void> {
+    if (!onDisplay.value) return;
+
+    if (['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'].includes(e.key)) {
+      const arrow: Record<
+        'ArrowLeft' | 'ArrowUp' | 'ArrowRight' | 'ArrowDown',
+        number
+      > = {
+        ArrowLeft: 1,
+        ArrowUp: -7,
+        ArrowRight: -1,
+        ArrowDown: 7,
+      };
+
+      let numberOfDay = arrow[e.key as keyof typeof arrow];
+
+      if (
+        lang.value.dir.picker === 'ltr' &&
+        (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+      ) {
+        numberOfDay = -numberOfDay;
+      }
+
+      let focusedList = document.querySelectorAll<HTMLElement>(
+        '.pdp .pdp-day.hover',
+      );
+      if (!focusedList.length) {
+        focusedList = document.querySelectorAll<HTMLElement>(
+          '.pdp .pdp-day.start-range,.pdp .pdp-day.end-range',
+        );
+      }
+
+      let focusedDay: HTMLElement | null = focusedList.length
+        ? focusedList[focusedList.length - 1]
+        : null;
+
+      if (focusedDay) {
+        let column = Number(getColumn(focusedDay));
+        focusedDay.classList.remove('hover');
+
+        const firstColumnMonth = onDisplay.value.toString();
+        const focusedMonth = onDisplay.value.clone().addMonth(column);
+
+        let nextValue: PersianDate | number = focusedMonth
+          .date(focusedDay.innerText)
+          .addDay(numberOfDay);
+
+        if (!checkDate(nextValue, 'date')) {
+          focusedDay.classList.add('hover');
+          return;
+        }
+
+        nextValue = (nextValue as PersianDate).date();
+        column = focusedMonth.diff(firstColumnMonth, 'month');
+
+        if (column < 0) {
+          onDisplay.value.subMonth(columnCount.value);
+          column = columnCount.value - 1;
+        } else if (column >= columnCount.value) {
+          onDisplay.value.addMonth(columnCount.value);
+          column = 0;
+        }
+
+        await nextTick();
+
+        focusedDay = document.querySelector<HTMLElement>(
+          `.pdp .pdp-main .pdp-column[data-column='${column}'] .pdp-day[value='${nextValue}']`,
+        );
+
+        focusedDay?.classList.add('hover');
+      } else {
+        focusedDay = document.querySelector<HTMLElement>(
+          '.pdp .pdp-day:not(.empty):not(.disabled)',
+        );
+        if (focusedDay) focusedDay.classList.add('hover');
+        else {
+          const fallback = document.querySelector<HTMLElement>(
+            `.pdp .pdp-main .pdp-column[data-column="0"] .pdp-day[value="${fromDate.value?.date()}"]`,
+          );
+          fallback?.classList.add('hover');
+        }
+      }
+
+      if (props.mode === 'range' && selectedDates.value.length === 1) {
+        const target = document.querySelector<HTMLElement>(
+          '.pdp .pdp-day.hover',
+        );
+        if (target) selectInRangeDate({ target });
+      }
+
+      return;
+    }
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+
+      const focusedDay = document.querySelector<HTMLElement>(
+        '.pdp .pdp-day.hover',
+      );
+      if (focusedDay) {
+        selectDate(
+          onDisplay.value
+            .clone()
+            .addMonth(Number(getColumn(focusedDay) || 0))
+            .date(focusedDay.innerText),
+          'date',
+        );
+        return;
+      }
+
+      // fallback: parse typed input(s)
+      let localOnDisplay: PersianDate | undefined;
+
+      displayValue.value.forEach((value, index) => {
+        if (!value) return;
+
+        if (props.type === 'time') {
+          const time = value.split(/[/ -.,:\\]/);
+          localOnDisplay = checkDate(core.value.clone(), 'time')
+            ? core.value.clone()
+            : fromDate.value?.clone();
+          if (!localOnDisplay) return;
+          localOnDisplay.time(time as [string]);
+        } else {
+          localOnDisplay = core.value.clone().parse(value);
+        }
+
+        if (localOnDisplay && selectDate(localOnDisplay, 'time') === 0) {
+          const diff = localOnDisplay.diff(
+            onDisplay.value as PersianDate,
+            'month',
+          );
+          if (diff < 0 || diff >= columnCount.value)
+            onDisplay.value = localOnDisplay.clone();
+          displayValue.value[index] = '';
+        }
+      });
+    }
+  }
+
+  function selectInRangeDate(e: { target: HTMLElement }): void {
+    if (!onDisplay.value || selectedDates.value.length === 0) return;
+
+    const target = e.target;
+    if (!target.classList.contains('pdp-day')) return;
+
+    document.querySelectorAll<HTMLElement>('.pdp .pdp-day').forEach((el) => {
+      el.classList.remove('in-range');
+    });
+
+    let column = Number(getColumn(target));
+    const hoveredDate = onDisplay.value
+      .clone()
+      .startOf('date')
+      .addMonth(column)
+      .date(target.innerText);
+
+    const selectedDate = selectedDates.value[0].clone().startOf('date');
+    const number = hoveredDate.isAfter(selectedDate) ? 1 : -1;
+
+    const selectedDateDOM = document.querySelector<HTMLElement>(
+      '.pdp-day.start-range,.pdp-day.end-range',
+    );
+
+    if (selectedDateDOM) {
+      column = Number(getColumn(selectedDateDOM));
+      const pair = hoveredDate.isBefore(selectedDate)
+        ? (['start-range', 'end-range'] as const)
+        : (['end-range', 'start-range'] as const);
+      selectedDateDOM.classList.replace(pair[0], pair[1]);
+    } else {
+      selectedDate.parse(onDisplay.value);
+
+      if (number === 1) {
+        selectedDate.startOf('month').subDay();
+        column = -1;
+      } else {
+        selectedDate
+          .addMonth(columnCount.value - 1)
+          .endOf('month')
+          .addDay()
+          .startOf('date');
+        column = columnCount.value;
+      }
+    }
+
+    while (!hoveredDate.isSame(selectedDate)) {
+      const oldMonth = selectedDate.month();
+      selectedDate.addDay(number);
+      if (oldMonth !== selectedDate.month()) column += number;
+
+      if (checkDate(selectedDate, 'date') && !isInDisable(selectedDate)) {
+        const el = document.querySelector<HTMLElement>(
+          `.pdp-column[data-column='${column}'] .pdp-day[value='${selectedDate.date()}']`,
+        );
+        el?.classList.add('in-range');
+      } else {
+        break;
+      }
+    }
+  }
+
+  function submitDate(close = true): void {
+    const displayDate = selectedDates.value.map((el) =>
+      el.toString(formats.value.input),
+    );
+
+    if (props.dualInput) displayValue.value = displayDate;
+    else displayValue.value[0] = displayDate.join(' - ');
+
+    submitedValue.value = selectedDates.value.slice();
+
+    setModel();
+    emit(
+      'submit',
+      props.mode === 'range' ? selectedDates.value : selectedDates.value[0],
+    );
+
+    if (close) showDatePicker.value = false;
+  }
+
+  function getColumn(el: HTMLElement): number | string {
+    const col = (el.parentNode?.parentNode?.parentNode as HTMLElement | null)
+      ?.dataset.column;
+    return col ?? 0;
+  }
+
+  function nearestDate(date: PersianDate): PersianDate {
+    if (!fromDate.value || !toDate.value) return date;
+    return Math.abs(date.diff(fromDate.value)) <=
+      Math.abs(date.diff(toDate.value))
+      ? fromDate.value.clone()
+      : toDate.value.clone();
+  }
+
+  function locate(): void {
+    pickerPlace.top = false;
+    pickerPlace.left = false;
+    pickerPlace.right = false;
+
+    void nextTick(() => {
+      const input = inputsRef.value[0];
+      const picker = pdpPicker.value;
+
+      if (!input || !picker) return;
+
+      const inputOffset =
+        input.offsetHeight + input.getBoundingClientRect().top;
+      const pickerHeight = picker.offsetHeight + 10;
+      const pickerRect = picker.getBoundingClientRect();
+
+      pickerPlace.top =
+        inputOffset >= pickerHeight &&
+        window.innerHeight - (inputOffset + pickerHeight) < 0;
+
+      pickerPlace.left = pickerRect.left <= 0;
+      pickerPlace.right =
+        window.innerWidth - (pickerRect.left + pickerRect.width) <= 0;
+    });
+  }
+
+  function changeLocale(): void {
+    if (!fromDate.value || !toDate.value || !onDisplay.value) return;
+
+    const locales = props.locale.split(',');
+    const index = locales.indexOf(currentLocale.value);
+
+    currentLocale.value = locales[index + 1] || locales[0];
+
+    const calendar = lang.value.calendar;
+
+    core.value.calendar(calendar);
+    fromDate.value.calendar(calendar);
+    toDate.value.calendar(calendar);
+    onDisplay.value.calendar(calendar);
+
+    for (const d of selectedDates.value) d.calendar(calendar);
+
+    submitDate(false);
+  }
+
+  function clear(input: Inputs): void {
+    const inputIndex: number = input === 'firstInput' ? 0 : 1;
+    displayValue.value[inputIndex] = '';
+    emit('clear');
+
+    // keep original behavior
+    if (props.dualInput) {
+      const v = props.modelValue;
+      if (Array.isArray(v)) {
+        const next = v.map((val, i) => (i === inputIndex ? null : val));
+        setModel(next);
+        return;
+      }
+    }
+
+    setModel('');
+  }
+
+  function startChangeTime(
+    timeIndex: number,
+    unit: 'minute' | 'hour',
+    operator: 'add' | 'sub',
+  ): void {
+    if (!fromDate.value || !toDate.value) return;
+
+    let time = selectedTimes.value[timeIndex];
+
+    if (!time) {
+      time = core.value.clone();
+
+      if (!checkDate(time, 'time')) {
+        time = toDate.value
+          .clone()
+          .subDay()
+          .time(core.value as PersianDate);
+      }
+
+      if (timeIndex === 1 && !selectedTimes.value.length)
+        selectedTimes.value.push(time.clone());
+      selectedTimes.value.push(time);
+    }
+
+    stopChangeTime();
+
+    const maxAmount = unit === 'hour' ? 23 : 59;
+    let currentAmount = time[unit]();
+
+    const changeTime = (): void => {
+      if (operator === 'add') {
+        currentAmount++;
+        if (currentAmount > maxAmount) currentAmount = 0;
+      } else {
+        currentAmount--;
+        if (currentAmount < 0) currentAmount = maxAmount;
+      }
+
+      if (!checkDate(time[unit](currentAmount), 'time')) {
+        time.parse(
+          time.isSameOrAfter(toDate.value!.clone())
+            ? toDate.value!.clone()
+            : fromDate.value!.clone(),
+        );
+      } else if (
+        selectedTimes.value.length === 2 &&
+        selectedTimes.value[0].isAfter(selectedTimes.value[1] as PersianDate)
+      ) {
+        time.parse(
+          (timeIndex === 0
+            ? selectedTimes.value[1]
+            : selectedTimes.value[0]) as PersianDate,
+        );
+      }
+
+      if (!isInDisable(time)) {
+        if (props.type === 'time') {
+          selectedDates.value[timeIndex] = time;
+        } else if (selectedDates.value[timeIndex]) {
+          selectedDates.value[timeIndex].time(time);
+        }
+
+        emit('select', time);
+
+        if (
+          props.autoSubmit &&
+          !selectedTimes.value.some((s) => isInDisable(s as PersianDate))
+        ) {
+          submitDate(false);
+        }
+      }
+    };
+
+    changeTime();
+    interval.value = setInterval(changeTime, 100);
+  }
+
+  function stopChangeTime(): void {
+    if (interval.value) {
+      clearInterval(interval.value);
+      interval.value = null;
+    }
+  }
+
+  function selectShorcut(dates: PersianDate[]): void {
+    selectedDates.value = dates.map((d, i) => {
+      if (i === 0) onDisplay.value = d.clone();
+      emit('select', d);
+      return d.clone();
+    });
+
+    if (props.autoSubmit) submitDate();
+  }
+
+  function setDate(dates: string | string[] | null): void {
+    if (!dates) return;
+
+    let arr: string[] = [];
+    if (props.mode === 'single' && typeof dates === 'string') arr = [dates];
+    else if (Array.isArray(dates)) arr = dates;
+    else arr = [dates];
+
+    selectedDates.value = [];
+    selectedTimes.value = [];
+
+    for (let i = 0; i < arr.length; i++) {
+      const d = arr[i];
+      const date = core.value
+        .clone()
+        .fromGregorian(
+          (props.type === 'time'
+            ? `${core.value.toString('YYYY-MM-DD')} `
+            : '') + d,
+        );
+
+      if (Core.isPersianDate(date)) {
+        selectedDates.value.push(date.clone());
+        selectedTimes.value.push(date.clone());
+        if (i === 0) onDisplay.value = date.clone();
+      } else {
+        selectedDates.value = [];
+        selectedTimes.value = [];
+        break;
+      }
+    }
+
+    if (selectedDates.value.length) submitDate();
+  }
+</script>
+
+<script lang="ts">
+  export { PersianDate } from './utils/modules/core';
+</script>
+
 <template>
   <div
     ref="root"
@@ -14,9 +1348,10 @@
         {{ label }}
       </label>
     </slot>
+
     <div v-bind="attrs.div">
-      <template v-for="(input, index) in inputs" :key="input"
-        ><div
+      <template v-for="(input, index) in inputs" :key="input">
+        <div
           v-if="!$slots.hasOwnProperty('icon') || $slots?.icon?.()?.length"
           :key="`icon-${input}`"
           :class="[
@@ -24,38 +1359,47 @@
             { 'pdp-pointer': ['all', 'icon'].includes(clickOn) },
             { 'pdp-inside': iconInside },
           ]"
-          @click="showPicker('icon', index)"
+          @click="showPicker('icon', index as 0 | 1)"
         >
           <slot name="icon">
             <PDPIcon :icon="type" width="23" height="23"></PDPIcon>
           </slot>
         </div>
+
         <input
-          ref="inputs"
+          ref="inputsRef"
           v-model="displayValue[index]"
           type="text"
           autocomplete="off"
           v-bind="attrs[input]"
-          @focus="showPicker('input', index)"
-          @keydown="selectWithArrow" /><button
+          @focus="showPicker('input', index as 0 | 1)"
+          @keydown="selectWithArrow"
+        />
+
+        <button
           v-if="clearable"
           :key="`clear-${input}`"
           class="pdp-clear"
           type="button"
           @click="clear(input)"
         >
-          <slot name="clear"><PDPIcon icon="clear"></PDPIcon></slot></button
-      ></template>
+          <slot name="clear"><PDPIcon icon="clear"></PDPIcon></slot>
+        </button>
+      </template>
     </div>
+
     <slot name="after"></slot>
+
     <PDPAlt
       v-if="attrs.alt.name"
       :name="attrs.alt.name"
       :format="formats.alt"
       :dates="submitedValue"
     />
+
     <div v-if="showDatePicker">
       <div class="pdp-overlay" @click="showDatePicker = false"></div>
+
       <div v-bind="attrs.picker" ref="pdpPicker">
         <div class="pdp-auto">
           <div v-if="type.includes('date')">
@@ -72,6 +1416,7 @@
                 {{ month.label }}
               </li>
             </ul>
+
             <ul
               v-show="showYearSelect"
               ref="pdpSelectYear"
@@ -80,13 +1425,14 @@
               <li
                 v-for="(year, index) in years"
                 :key="index"
-                :class="{ selected: onDisplay.year() == year }"
+                :class="{ selected: onDisplay?.year() == year }"
                 @click="changeSelectedYear(year)"
               >
                 {{ year }}
               </li>
             </ul>
           </div>
+
           <div v-if="type.includes('date')" class="pdp-header">
             <div v-if="locale.includes(',')" class="top">
               <div>{{ lang.translations.text }}</div>
@@ -94,6 +1440,7 @@
                 {{ nextLocale }}
               </button>
             </div>
+
             <div class="bottom">
               <button
                 tabindex="-1"
@@ -101,21 +1448,25 @@
                 :class="[
                   'pdp-arrow',
                   {
-                    disabled: !checkDate(onDisplay.clone().subMonth(), 'month'),
+                    disabled: !checkDate(
+                      onDisplay?.clone().subMonth(),
+                      'month',
+                    ),
                   },
                 ]"
                 :title="lang.translations.prevMonth"
                 @click="changeSelectedMonth('sub')"
               >
-                <slot name="right-arrow"
-                  ><PDPArrow
+                <slot name="right-arrow">
+                  <PDPArrow
                     direction="right"
                     width="10"
                     height="10"
                     :inverse="lang.dir.picker == 'ltr'"
-                  ></PDPArrow
-                ></slot>
+                  ></PDPArrow>
+                </slot>
               </button>
+
               <div>
                 <div v-for="(item, i) in columnCount" :key="i">
                   <button
@@ -124,42 +1475,47 @@
                     tabindex="-1"
                     @click="showPart('month')"
                   >
-                    {{
-                      months[onDisplay.clone().addMonth(i).month()].label
-                    }}</button
-                  ><button
+                    {{ months[onDisplay?.clone().addMonth(i).month()]?.label }}
+                  </button>
+
+                  <button
                     class="pdp-year"
                     type="button"
                     tabindex="-1"
                     @click="showPart('year')"
                   >
-                    {{ onDisplay.clone().addMonth(i).year() }}
+                    {{ onDisplay?.clone().addMonth(i).year() }}
                   </button>
                 </div>
               </div>
+
               <button
                 tabindex="-1"
                 type="button"
                 :class="[
                   'pdp-arrow',
                   {
-                    disabled: !checkDate(onDisplay.clone().addMonth(), 'month'),
+                    disabled: !checkDate(
+                      onDisplay?.clone().addMonth(),
+                      'month',
+                    ),
                   },
                 ]"
                 :title="lang.translations.nextMonth"
                 @click="changeSelectedMonth('add')"
               >
-                <slot name="left-arrow"
-                  ><PDPArrow
+                <slot name="left-arrow">
+                  <PDPArrow
                     direction="left"
                     width="10"
                     height="10"
                     :inverse="lang.dir.picker == 'ltr'"
-                  ></PDPArrow
-                ></slot>
+                  ></PDPArrow>
+                </slot>
               </button>
             </div>
           </div>
+
           <div ref="pdpMain" class="pdp-main">
             <div v-if="type.includes('date')" class="pdp-date">
               <div
@@ -177,6 +1533,7 @@
                     {{ weekday }}
                   </div>
                 </div>
+
                 <div class="pdp-days">
                   <div v-for="(week, wIndex) in monthDays[i]" :key="wIndex">
                     <div
@@ -193,7 +1550,7 @@
                         { 'in-range': day.inRange },
                       ]"
                       :value="day.val"
-                      @click="selectDate(day.raw, 'date')"
+                      @click="day.raw && selectDate(day.raw, 'date')"
                     >
                       {{ day.val }}
                     </div>
@@ -201,10 +1558,12 @@
                 </div>
               </div>
             </div>
+
             <div v-if="type.includes('time')" class="pdp-time inline">
               <div v-if="type == 'time'" class="pdp-column">
                 <div v-for="(c, i) in columnCount" :key="i"></div>
               </div>
+
               <div
                 :class="[
                   'pdp-moment',
@@ -220,7 +1579,7 @@
                         selectedTimes[i] &&
                         (!checkDate(selectedTimes[i], 'time') ||
                           isInDisable(selectedTimes[i])),
-                    }, // FIXME: go to method
+                    },
                   ]"
                 >
                   <div class="hour">
@@ -233,12 +1592,16 @@
                       @mouseup.prevent="stopChangeTime"
                       @keyup.enter.prevent="stopChangeTime"
                     >
-                      <slot name="up-arrow"><PDPArrow></PDPArrow></slot></button
-                    >{{
+                      <slot name="up-arrow"><PDPArrow></PDPArrow></slot>
+                    </button>
+
+                    {{
                       selectedTimes[i]
                         ? selectedTimes[i].hour('HH')
                         : core.hour('HH')
-                    }}<button
+                    }}
+
+                    <button
                       type="button"
                       @touchstart.prevent="startChangeTime(i, 'hour', 'sub')"
                       @mousedown.prevent="startChangeTime(i, 'hour', 'sub')"
@@ -247,11 +1610,12 @@
                       @mouseup.prevent="stopChangeTime"
                       @keyup.enter.prevent="stopChangeTime"
                     >
-                      <slot name="down-arrow"
-                        ><PDPArrow direction="down"></PDPArrow
-                      ></slot>
+                      <slot name="down-arrow">
+                        <PDPArrow direction="down"></PDPArrow>
+                      </slot>
                     </button>
                   </div>
+
                   :
                   <div class="minute">
                     <button
@@ -265,12 +1629,16 @@
                       @mouseup.prevent="stopChangeTime"
                       @keyup.enter.prevent="stopChangeTime"
                     >
-                      <slot name="up-arrow"><PDPArrow></PDPArrow></slot></button
-                    >{{
+                      <slot name="up-arrow"><PDPArrow></PDPArrow></slot>
+                    </button>
+
+                    {{
                       selectedTimes[i]
                         ? selectedTimes[i].minute('mm')
                         : core.minute('mm')
-                    }}<button
+                    }}
+
+                    <button
                       type="button"
                       @touchstart.prevent="startChangeTime(i, 'minute', 'sub')"
                       @mousedown.prevent="startChangeTime(i, 'minute', 'sub')"
@@ -281,15 +1649,16 @@
                       @mouseup.prevent="stopChangeTime"
                       @keyup.enter.prevent="stopChangeTime"
                     >
-                      <slot name="down-arrow"
-                        ><PDPArrow direction="down"></PDPArrow
-                      ></slot>
+                      <slot name="down-arrow">
+                        <PDPArrow direction="down"></PDPArrow>
+                      </slot>
                     </button>
                   </div>
                 </div>
               </div>
             </div>
           </div>
+
           <div class="pdp-footer">
             <div>
               <slot name="footer"></slot>
@@ -300,6 +1669,7 @@
                 - {{ selectedDates[1].toString(formats.display) }}
               </small>
             </div>
+
             <div>
               <button
                 v-if="checkDate(core, 'date')"
@@ -308,12 +1678,11 @@
                 :tabindex="tabIndex"
                 @click="goToToday"
               >
-                {{ lang.translations.now }}</button
-              ><button
-                v-if="
-                  !autoSubmit &&
-                  !selectedDates.some((date) => isInDisable(date))
-                "
+                {{ lang.translations.now }}
+              </button>
+
+              <button
+                v-if="!autoSubmit && !selectedDates.some((d) => isInDisable(d))"
                 class="pdp-submit"
                 type="button"
                 :tabindex="tabIndex"
@@ -324,6 +1693,7 @@
             </div>
           </div>
         </div>
+
         <ul
           v-if="shortcuts && Object.keys(shortcuts).length > 0"
           class="pdp-shortcut"
@@ -348,1275 +1718,6 @@
     </div>
   </div>
 </template>
-
-<script lang="ts">
-  //TODO: use scoped slots
-  //TODO: add time config
-  //TODO: add tip for days
-  //TODO: test the project with attention and test in nuxt
-  //TODO: refactor and write comment --> pay a high attention
-
-  // ************************ Core ************************
-  import { defineComponent, type PropType } from 'vue';
-  import { PersianDate, Core } from './utils/modules/core';
-  // ************************ Types ************************
-  import type {
-    Obj,
-    Attrs,
-    Langs,
-    RecursivePartial,
-    Styles,
-    Inputs,
-    PickerPlace,
-    TypePart,
-    CalendarPart,
-    Disable,
-    Formats,
-    MonthDays,
-    Months,
-    Shortcuts,
-    DefaultDate,
-  } from './utils/modules/types';
-  // ************************ Components ************************
-  import PDPArrow from './utils/components/PDPArrow.vue';
-  import PDPIcon from './utils/components/PDPIcon.vue';
-  import PDPAlt from './utils/components/PDPAlt.vue';
-
-  const isClient = typeof window !== 'undefined';
-
-  export { PersianDate };
-  export default defineComponent({
-    components: {
-      PDPArrow,
-      PDPIcon,
-      PDPAlt,
-    },
-    inheritAttrs: false,
-    props: {
-      /**
-       * the format of the model value
-       * @type String
-       * @see https://alireza-ab.ir/persian-date/formats#
-       * @desc default value in "date" type is "YYYY-MM-DD"
-       * 		default value in "datetime" type is "YYYY-MM-DD HH:mm"
-       * 		default value in "time" type is "HH:mm"
-       */
-      format: {
-        type: String,
-      },
-
-      /**
-       * the format of the input value
-       * @type String
-       * @see https://alireza-ab.ir/persian-date/formats#
-       * @desc default value equal to the value of "type" prop
-       */
-      inputFormat: {
-        type: String,
-      },
-
-      /**
-       * the format of the value that shows in the footer of picker
-       * @type String
-       * @see https://alireza-ab.ir/persian-date/formats#
-       * @desc default value in "date" type is "?D ?MMMM"
-       * 		default value in "datetime" type is "?D ?MMMM HH:mm"
-       * 		default value in "time" type is "HH:mm"
-       */
-      displayFormat: {
-        type: String,
-      },
-
-      /**
-       * the type of picker
-       * @default "date"
-       * @type String
-       * @values date | time | datetime
-       * @since 2.0.0
-       */
-      type: {
-        type: String as PropType<'date' | 'time' | 'datetime'>,
-        default: 'date',
-        validator: (val: string) => ['date', 'time', 'datetime'].includes(val),
-      },
-
-      /**
-       * the date of start of the picker
-       * @type String
-       * @example 1400/7/1 | 1400-7
-       */
-      from: {
-        type: String,
-        default: (props: Obj) => (props.type === 'time' ? '' : '1300'),
-      },
-
-      /**
-       * the date of end of the picker
-       * @type String
-       * @example 1400/7/1 | 1400-7
-       */
-      to: {
-        type: String,
-        default: (props: Obj) => (props.type === 'time' ? '23:59' : '1499'),
-      },
-
-      /**
-       * show or hide the picker
-       * @default false
-       * @type Boolean
-       */
-      show: {
-        default: false,
-        type: Boolean,
-      },
-
-      /**
-       * show the picker with click on the some sections
-       * @default "all"
-       * @type String
-       * @values all | input | icon | none
-       */
-      clickOn: {
-        default: 'all',
-        type: String as PropType<'all' | 'input' | 'icon' | 'none'>,
-        validator: (val: string) =>
-          ['all', 'input', 'icon', 'none'].includes(val),
-      },
-
-      /**
-       * show the picker in modal mode
-       * @default true
-       * @type Boolean
-       */
-      modal: {
-        default: false,
-        type: Boolean,
-      },
-
-      /**
-       * text for label tag
-       * @type String
-       */
-      label: {
-        type: String,
-      },
-
-      /**
-       * number of column
-       * @default "{ 576: 1 }"
-       * @type Object | Number
-       * @desc 1. you can send the number of column
-       *  	or send the object of the number of
-       *  	column in the breakpoint.
-       * 		2. if the breaking point in the object
-       * 		is not specified, the default value it's 2
-       */
-      column: {
-        default: () => ({ 576: 1 }),
-        type: [Number, Object] as PropType<number | Record<number, number>>,
-      },
-
-      /**
-       * submit when date selected or not
-       * @default true
-       * @type Boolean
-       */
-      autoSubmit: {
-        default: true,
-        type: Boolean,
-      },
-
-      /**
-       * mode of select date
-       * @default "range"
-       * @type String
-       * @values range | single
-       */
-      mode: {
-        default: 'range',
-        type: String as PropType<'single' | 'range'>,
-        validator: (val: string) => ['single', 'range'].includes(val),
-      },
-
-      /**
-       * the locale of datepicker
-       * @default "fa"
-       * @type String
-       * @values fa | en | fa,en |  en,fa
-       * @desc Except above values, you can add
-       *  	the language in "localeConfig" prop and use it.
-       * @since 2.0.0
-       */
-      locale: {
-        default: 'fa',
-        type: String,
-      },
-
-      /**
-       * user can clear the selected dates or not
-       * @default false
-       * @type Boolean
-       * @since 2.0.0
-       */
-      clearable: {
-        default: false,
-        type: Boolean,
-      },
-
-      /**
-       * disable some dates or time
-       * @type [Array, String, Function, RegExp]
-       * @since 2.0.0
-       */
-      disable: {
-        type: [Array, String, Function, RegExp] as PropType<Disable>,
-      },
-
-      /**
-       * the config for locales
-       * @type Object
-       * @since 2.0.0
-       */
-      localeConfig: {
-        type: Object as PropType<RecursivePartial<Langs>>,
-      },
-
-      /**
-       * the styles of the picker
-       * @type Object
-       * @since 2.0.0
-       */
-      styles: {
-        type: Object as PropType<Styles>,
-      },
-
-      /**
-       * the color of the picker
-       * @type String
-       * @values red | pink | orange | green | purple | gray
-       * @since 2.0.0
-       */
-      color: {
-        type: String as PropType<
-          'blue' | 'red' | 'pink' | 'orange' | 'green' | 'purple' | 'gray'
-        >,
-        validator: (val: string) =>
-          ['blue', 'red', 'pink', 'orange', 'green', 'purple', 'gray'].includes(
-            val,
-          ),
-      },
-
-      /**
-       * use two input for dispaly
-       * @type Boolean
-       * @default false
-       * @since 2.2.0
-       */
-      dualInput: {
-        type: Boolean,
-        default: false,
-      },
-
-      /**
-       * show icon inside of input
-       * @type Boolean
-       * @default false
-       * @since 2.2.0
-       */
-      iconInside: {
-        type: Boolean,
-        default: false,
-      },
-
-      /**
-       * shortcut for select date and time quickly
-       * @type Boolean | Object
-       * @since 2.2.0
-       */
-      shortcut: {
-        type: [Boolean, Object] as PropType<boolean | Shortcuts>,
-        default: false,
-      },
-    },
-    emits: ['open', 'close', 'select', 'submit', 'clear', 'update:modelValue'],
-    data() {
-      return {
-        core: new PersianDate(),
-        onDisplay: undefined as PersianDate | undefined,
-        fromDate: undefined as PersianDate | undefined,
-        toDate: undefined as PersianDate | undefined,
-        selectedDates: [] as PersianDate[],
-        selectedTimes: [] as PersianDate[],
-        showDatePicker: false,
-        showYearSelect: false,
-        showMonthSelect: false,
-        showTopOfInput: false,
-        displayValue: [] as string[],
-        inputName: 'firstInput' as Inputs,
-        pickerPlace: {} as PickerPlace,
-        documentWidth: isClient ? window.innerWidth : Infinity,
-        langs: Core.langs,
-        currentLocale: this.locale.split(',')[0],
-        interval: null as ReturnType<typeof setInterval> | null,
-        submitedValue: [] as PersianDate[],
-      };
-    },
-    computed: {
-      lang(): Langs[string] {
-        return this.langs[this.currentLocale];
-      },
-      attrs(): Attrs {
-        const attrs: Attrs = {
-          div: { class: 'pdp-group' },
-          label: { class: 'pdp-label' },
-          alt: {},
-          picker: { class: 'pdp-picker' },
-          firstInput: { class: 'pdp-input' },
-          secondInput: { class: 'pdp-input' },
-        };
-        for (const key in this.$attrs) {
-          try {
-            // @ts-expect-error type
-            const [, group, attr] = key.match(
-              /(div|label|alt|picker|firstInput|secondInput)-(.*)/,
-            ) as [void, keyof Attrs, string];
-            attrs[group][attr] = this.$attrs[key];
-          } catch {
-            attrs['firstInput'][key] = this.$attrs[key] as string;
-          }
-        }
-        attrs.picker.class = [
-          attrs.picker.class,
-          {
-            'pdp-top': this.pickerPlace.top,
-            'pdp-left': this.pickerPlace.left,
-            'pdp-right': this.pickerPlace.right,
-          },
-          this.lang.dir.picker,
-        ];
-        if (this.mode == 'single' && this.dualInput) {
-          attrs['secondInput'].disabled = 'disabled';
-        }
-        if (this.showDatePicker) {
-          attrs[this.inputName].class += ' pdp-focus';
-        }
-        return attrs;
-      },
-      years(): number[] {
-        let start: number = this.fromDate!.year();
-        const end: number = this.toDate!.year();
-        return Array(end - start + 1)
-          .fill(null)
-          .map(() => start++);
-      },
-      columnCount(): number {
-        let column = 2;
-        if (Core.isNumber(this.column)) {
-          column = this.column as number;
-        } else {
-          const breakpoint = Object.keys(this.column)
-            .sort((a, b) => +a - +b)
-            .find((bp) => this.documentWidth <= +bp);
-          if (breakpoint) column = (this.column as Obj)[breakpoint] as number;
-        }
-        if (this.type.includes('time')) {
-          const scale = column / (this.mode == 'single' ? 1 : 2);
-          (this.$refs.root as HTMLElement).style.setProperty(
-            '--time-scale',
-            (scale > 1 ? scale : 1) + '',
-          );
-        }
-        return column;
-      },
-      monthDays(): MonthDays[][] {
-        const months: MonthDays[][] = [];
-        for (let i = 0; i < this.columnCount; i++) {
-          let emptyCells;
-          const selectedYear = this.onDisplay!.clone().addMonth(i).year();
-          const selectedMonth = this.onDisplay!.clone().addMonth(i).month();
-          emptyCells = +this.onDisplay!.clone()
-            .parse(selectedYear, selectedMonth, 1)
-            .toString('?d');
-          let daysOfMonthNumber = this.onDisplay!.getDaysInMonth(
-            selectedYear,
-            selectedMonth,
-          );
-          const numberOfWeek = Math.ceil((daysOfMonthNumber + emptyCells) / 7);
-          const month: MonthDays[] = [];
-          let showDay = 1;
-          for (let week = 0; week < numberOfWeek; week++) {
-            month[week] = [];
-            for (let day = 0; day < 7; day++) {
-              if (emptyCells) {
-                month[week][day] = { empty: true };
-                --emptyCells;
-              } else if (daysOfMonthNumber) {
-                //FIXME: refactor
-                month[week][day] = {
-                  friday: day == 6,
-                  raw: this.onDisplay!.clone().addMonth(i).date(showDay),
-                  startRange:
-                    this.selectedDates[0] &&
-                    this.selectedDates[0].isSame(
-                      selectedYear,
-                      selectedMonth,
-                      showDay,
-                    ),
-                  endRange:
-                    this.selectedDates[1] &&
-                    this.selectedDates[1].isSame(
-                      selectedYear,
-                      selectedMonth,
-                      showDay,
-                    ),
-                  inRange:
-                    this.selectedDates.length == 2 &&
-                    this.core
-                      .clone()
-                      .parse(selectedYear, selectedMonth, showDay)
-                      .isBetween(
-                        ...(this.selectedDates.map((date) =>
-                          date.toString(),
-                        ) as [string, string]),
-                      ),
-                  disabled:
-                    !this.checkDate(
-                      this.onDisplay!.clone().addMonth(i).date(showDay),
-                      'date',
-                    ) ||
-                    this.isInDisable(
-                      this.onDisplay!.clone().addMonth(i).date(showDay),
-                    ),
-                  today: this.core
-                    .clone()
-                    .isSame(selectedYear, selectedMonth, showDay),
-                  val: showDay++,
-                };
-                --daysOfMonthNumber;
-              } else month[week][day] = { empty: true };
-            }
-          }
-          months.push(month);
-        }
-        return months;
-      },
-      months(): Months {
-        const months: Months = {};
-        for (let i = 1; i <= 12; i++) {
-          months[i] = {
-            label: this.lang.months[i - 1],
-            selected: this.onDisplay!.month() == i,
-            disabled: !this.checkDate(
-              this.onDisplay!.clone().month(i),
-              'month',
-            ),
-          };
-        }
-        return months;
-      },
-      nextLocale(): string {
-        const locales = this.locale.split(',');
-        const index = locales.indexOf(this.currentLocale);
-        const locale = locales[index + 1] || locales[0];
-        return this.langs[locale].translations.label;
-      },
-      formats(): Formats {
-        const displayFormat: Obj<string, TypePart | 'datetime'> = {
-          date: '?D ?MMMM',
-          datetime: '?D ?MMMM HH:mm',
-          time: 'HH:mm',
-        };
-        const format: Obj<string, TypePart | 'datetime'> = {
-          date: 'YYYY-MM-DD',
-          datetime: 'YYYY-MM-DD HH:mm',
-          time: 'HH:mm',
-        };
-        return {
-          model: this.format || format[this.type],
-          input: this.inputFormat || this.lang.inputFormat || this.type,
-          display:
-            this.displayFormat ||
-            this.lang.displayFormat ||
-            displayFormat[this.type],
-          alt:
-            (this.attrs.alt.format as string) ||
-            this.format ||
-            format[this.type],
-        };
-      },
-      defaultDate(): DefaultDate {
-        const prefix =
-          this.type === 'time' ? this.core.toString('jYYYY/jMM/jDD') + ' ' : '';
-        return {
-          from: prefix + this.from,
-          to: prefix + this.to,
-        };
-      },
-      inputs(): Inputs[] {
-        return !this.dualInput ? ['firstInput'] : ['firstInput', 'secondInput'];
-      },
-      tabIndex(): number | undefined {
-        return (
-          +(this.attrs.secondInput.tabindex || this.attrs.firstInput.tabindex) +
-            1 || undefined
-        );
-      },
-      shortcuts(): Shortcuts | false {
-        if (!this.shortcut) {
-          return false;
-        }
-        const shortcuts: Shortcuts = {};
-        const part = this.type.includes('date') ? 'date' : 'time';
-        let d = this.core.clone().now();
-        if (part == 'time' && !this.validate(d, part))
-          d = this.toDate!.clone().subDay().now();
-
-        const checkDate = (dates: PersianDate[]) => {
-          return this.mode === 'single'
-            ? this.validate(dates[0], part)
-            : dates.some((d) => this.validate(d, part)) &&
-                !this.isDisableBetween(
-                  ...(dates as [PersianDate, PersianDate]),
-                );
-        };
-        const setShortcut = (obj: Shortcuts, fromProps = false) => {
-          for (const phrase in obj) {
-            const dates = fromProps
-              ? obj[phrase].map((date: PersianDate) =>
-                  part == 'date'
-                    ? d.clone().fromJalali(date)
-                    : d.clone().time(date),
-                )
-              : obj[phrase];
-            if (checkDate(dates)) {
-              shortcuts[phrase] =
-                this.type == 'date'
-                  ? dates.map((d: PersianDate) => d.startOf('date'))
-                  : dates;
-            }
-          }
-        };
-
-        if (this.shortcut === true) {
-          setShortcut(
-            Core.getShortcuts(
-              d,
-              `${part}-${this.mode}`,
-              this.lang.translations,
-            )!,
-          );
-        } else {
-          setShortcut(this.shortcut, true);
-        }
-        return shortcuts;
-      },
-    },
-    watch: {
-      show: {
-        handler: function (val) {
-          this.showDatePicker = val;
-        },
-      },
-      showDatePicker: {
-        handler: function (val) {
-          if (val) this.$emit('open');
-          else {
-            if (!this.modal)
-              document.removeEventListener('scroll', this.locate);
-            this.$emit('close');
-          }
-        },
-      },
-      from: {
-        handler: function (val) {
-          this.fromDate!.fromJalali(val);
-        },
-      },
-      to: {
-        handler: function (val) {
-          this.toDate!.fromJalali(val);
-        },
-      },
-      mode: {
-        handler: function (val) {
-          if (val == 'single' && this.selectedDates.length == 2)
-            this.selectedDates.pop();
-        },
-      },
-      locale: {
-        handler: function (val, oldVal) {
-          const index = oldVal.split(',').indexOf(this.currentLocale);
-          this.currentLocale = val.split(',')[index];
-        },
-      },
-      localeConfig: {
-        handler: function (val) {
-          this.langs = Core.mergeObject(this.langs, val) as Langs;
-        },
-        deep: true,
-      },
-      styles: {
-        handler: function (val) {
-          Core.setStyles(val, this.$refs.root as HTMLElement);
-        },
-        deep: true,
-      },
-      color: {
-        handler: function (val) {
-          Core.setColor(val, this.$refs.root as HTMLElement);
-        },
-      },
-    },
-    beforeMount() {
-      this.langs = Core.mergeObject(this.langs, this.localeConfig) as Langs;
-    },
-    mounted() {
-      Core.setColor(this.color, this.$refs.root as HTMLElement);
-      Core.setStyles(this.styles, this.$refs.root as HTMLElement);
-
-      const calendar = this.lang.calendar;
-      this.fromDate = this.core
-        .clone()
-        .parse(this.defaultDate.from)
-        .calendar(calendar);
-      this.toDate = this.core
-        .clone()
-        .parse(this.defaultDate.to)
-        .endOf(Core.getLastUnit(this.to, this.type))
-        .calendar(calendar);
-      this.core.calendar(calendar);
-
-      const val = this.$attrs.modelValue as string | string[];
-      if (val) {
-        this.setDate(val);
-      } else {
-        const today = this.core.clone();
-        if (this.type == 'date') today.startOf('date');
-        if (this.checkDate(today, 'date')) {
-          this.onDisplay = today;
-        } else {
-          this.onDisplay = this.nearestDate(today).startOf('date');
-        }
-      }
-      window.addEventListener('resize', () => {
-        this.documentWidth = window.innerWidth;
-      });
-      if (this.type != 'date') {
-        this.onDisplay!.time(this.core as PersianDate);
-      }
-      this.showDatePicker = this.show;
-    },
-    methods: {
-      showPart(part: CalendarPart): void {
-        if (part == 'year') {
-          this.showMonthSelect = false;
-          this.showYearSelect = !this.showYearSelect;
-          if (this.showYearSelect) {
-            this.$nextTick(() => {
-              const selectedYearTop = (
-                (this.$refs.pdpSelectYear as HTMLElement).querySelector(
-                  'li.selected',
-                ) as HTMLLIElement
-              ).offsetTop;
-              (this.$refs.pdpSelectYear as HTMLElement).scroll({
-                top: selectedYearTop,
-                behavior: 'smooth',
-              });
-            });
-          }
-        } else if (part == 'month') {
-          this.showYearSelect = false;
-          this.showMonthSelect = !this.showMonthSelect;
-        }
-      },
-      changeSelectedMonth(month: 'add' | 'sub' | number): void {
-        const clone = this.onDisplay!.clone();
-        if (month == 'add') {
-          this.onDisplay!.addMonth();
-        } else if (month == 'sub') {
-          this.onDisplay!.subMonth();
-        } else this.onDisplay!.month(month);
-        if (this.checkDate(this.onDisplay, 'month'))
-          this.showMonthSelect = false;
-        else this.onDisplay = clone;
-      },
-      changeSelectedYear(year: number): void {
-        this.onDisplay!.year(year);
-        if (!this.checkDate(this.onDisplay, 'date'))
-          this.onDisplay = this.nearestDate(this.onDisplay as PersianDate);
-        this.showYearSelect = false;
-      },
-      validate(date: PersianDate, part: TypePart): boolean {
-        if (!this.checkDate(date, part) || this.isInDisable(date)) return false;
-        return true;
-      },
-      isDisableBetween(first: PersianDate, second: PersianDate): boolean {
-        if (!this.disable) return false;
-        if (this.type != 'datetime' && Core.isString(this.disable)) {
-          const date =
-            this.type == 'time'
-              ? second.clone().time(this.disable as string)
-              : this.disable;
-          return this.core
-            .clone()
-            .parse(date as PersianDate | string)
-            .isBetween(first.toString(), second.toString());
-        } else if (
-          this.type != 'datetime' &&
-          Array.isArray(this.disable) &&
-          this.disable.some((date) => Core.isString(date))
-        ) {
-          return this.disable.some((date) => {
-            if (this.type == 'time')
-              date = second
-                .clone()
-                .time(date as string)
-                .toString();
-            return this.core
-              .clone()
-              .parse(date as string)
-              .isBetween(first, second);
-          });
-        } else if (this.type != 'time') {
-          const inRangeDate = second.clone().startOf('date').subDay();
-          while (!inRangeDate.isSameOrBefore(first)) {
-            if (this.isInDisable(inRangeDate)) return true;
-            inRangeDate.subDay();
-          }
-        }
-        return false;
-      },
-      selectDate(date: PersianDate, part: TypePart): number {
-        let isValid = this.validate(date, part);
-        if (!isValid) {
-          return -1;
-        } else if (this.mode == 'range' && this.selectedDates.length == 1) {
-          isValid = !this.isDisableBetween(
-            this.selectedDates[0] as PersianDate,
-            date,
-          );
-          if (!isValid) {
-            return -2;
-          }
-        }
-        if (this.type == 'date') {
-          date.startOf('date');
-        }
-        if (this.mode == 'single') {
-          this.selectedDates = [date];
-        } else if (this.mode == 'range') {
-          (this.$refs.pdpMain as HTMLElement).addEventListener(
-            'mouseover',
-            this.selectInRangeDate,
-          );
-          if (this.selectedDates.length === 0) {
-            this.selectedDates[0] = date;
-            this.inputName = 'secondInput';
-          } else if (this.inputName === 'secondInput') {
-            this.inputName = 'firstInput';
-            if (!date.isBefore(this.selectedDates[0] as PersianDate)) {
-              this.selectedDates[1] = date;
-            } else {
-              if (this.selectedDates.length === 1)
-                this.selectedDates.unshift(date);
-              else {
-                this.selectedDates = [date];
-                this.inputName = 'secondInput';
-              }
-            }
-          } else {
-            this.selectedDates = [date];
-            this.inputName = 'secondInput';
-          }
-          if (this.selectedDates.length == 2) {
-            (this.$refs.pdpMain as HTMLElement).removeEventListener(
-              'mouseover',
-              this.selectInRangeDate,
-            );
-          }
-        }
-
-        if (this.type == 'datetime') {
-          this.selectedDates = this.selectedDates.map((d, i) => {
-            if (this.selectedTimes[i]) {
-              d.time(this.selectedTimes[i] as PersianDate);
-            }
-            this.selectedTimes[i] = d;
-            return d;
-          });
-        }
-
-        this.$emit('select', date);
-        if (
-          this.autoSubmit &&
-          (this.mode !== 'range' ||
-            (this.mode === 'range' && this.selectedDates.length == 2))
-        ) {
-          this.submitDate();
-          return 1;
-        }
-        return 0;
-      },
-      setModel(date?: PersianDate | PersianDate[] | string | string[]): void {
-        if (date === undefined) {
-          date = this.selectedDates.map((el) => {
-            return el.toString(this.formats.model);
-          });
-          if (this.mode == 'single') date = date[0];
-        }
-        this.$emit('update:modelValue', date);
-      },
-      goToToday(): void {
-        this.showMonthSelect = this.showYearSelect = false;
-        this.onDisplay = this.core.now().clone();
-        if (this.type.includes('time') && this.selectedDates.length) {
-          const lastIndex = this.selectedDates.length - 1;
-          const time = this.selectedDates[lastIndex];
-          time.time(this.onDisplay as PersianDate);
-          if (this.selectedTimes[lastIndex]) {
-            this.selectedTimes[lastIndex] = time.clone();
-          }
-          if (
-            this.autoSubmit &&
-            this.checkDate(time, 'time') &&
-            !this.isInDisable(time as PersianDate)
-          )
-            this.submitDate(false);
-        }
-        if (this.type.includes('date'))
-          this.$nextTick(() => {
-            document.querySelector('.pdp-day.today')!.classList.add('tada');
-            setTimeout(() => {
-              document
-                .querySelector('.pdp-day.today')!
-                .classList.remove('tada');
-            }, 1000);
-          });
-      },
-      checkDate(date: unknown, part: CalendarPart | TypePart): boolean {
-        let from, to;
-        if (!Core.isPersianDate(date))
-          date = this.core.clone().parse(date as PersianDate);
-        switch (part) {
-          case 'year':
-            from = this.fromDate!.toString('?YYYY');
-            to = this.toDate!.toString('?YYYY');
-            break;
-          case 'month':
-            from = this.fromDate!.toString('?YYYY/?MM');
-            to = this.toDate!.toString('?YYYY/?MM');
-            break;
-          case 'date':
-            from = this.fromDate!.toString();
-            to = this.toDate!.toString();
-            break;
-          case 'time':
-            from = this.fromDate!.toString(
-              this.type.includes('time') ? 'datetime' : 'date',
-            );
-            to = this.toDate!.toString(
-              this.type.includes('time') ? 'datetime' : 'date',
-            );
-            break;
-        }
-        return (date as PersianDate).isBetween(from, to, '[]');
-      },
-      isInDisable(date: PersianDate, disable?: Disable): boolean {
-        if (!this.disable) return false;
-        disable = disable || this.disable;
-        date = Core.isPersianDate(date)
-          ? date.clone()
-          : this.core.clone().parse(date);
-        if (Core.isString(disable)) {
-          if (this.type == 'time') disable = date.toString() + ' ' + disable;
-          return date.calendar('jalali').isSame(disable as string);
-        } else if (disable instanceof RegExp) {
-          const format = {
-            date: 'jYYYY/jM/jD',
-            datetime: 'jYYYY/jM/jD H:m',
-            time: 'H:m',
-          };
-          return disable.test(date.toString(format[this.type]));
-        } else if (Core.isFunction(disable)) {
-          return (disable as (date: PersianDate) => boolean)(date);
-        } else if (Array.isArray(disable)) {
-          return disable.some((val) => {
-            if (Core.isString(val)) {
-              if (this.type == 'time') val = date.toString() + ' ' + val;
-              return date.calendar('jalali').isSame(val as string);
-            } else if (val instanceof RegExp) {
-              const format = {
-                date: 'jYYYY/jM/jD',
-                datetime: 'jYYYY/jM/jD H:m',
-                time: 'H:m',
-              };
-              return val.test(date.toString(format[this.type]));
-            }
-          });
-        } else {
-          return false;
-        }
-      },
-      showPicker(el: 'icon' | 'input', index: 0 | 1): void {
-        if (this.clickOn == 'all' || this.clickOn == el) {
-          const inputName = this.inputs[index];
-          if (this.dualInput) this.inputName = inputName;
-          (this.$refs.inputs as HTMLElement[])[index].focus();
-          this.showDatePicker = true;
-          if (!this.modal) {
-            this.$nextTick(() => {
-              this.locate();
-            });
-            document.addEventListener('scroll', this.locate);
-          }
-        }
-      },
-      async selectWithArrow(e: KeyboardEvent): Promise<void> {
-        //FIXME: refactor
-        //FIXME: when up arraw press go to last date
-        // [37, 38, 39, 40] are key codes of arrow keys
-        if (
-          ['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'].includes(e.key)
-        ) {
-          const arrow = {
-            ArrowLeft: 1, // for left arrow must one day add in rtl picker
-            ArrowUp: -7, // for up arrow must seven day subtract in rtl picker
-            ArrowRight: -1, // for right arrow must one day subtract in rtl picker
-            ArrowDown: 7, // for down arrow must seven day add in rtl picker
-          };
-          let numberOfDay = arrow[e.key as keyof typeof arrow];
-          if (
-            this.lang.dir.picker == 'ltr' &&
-            ['ArrowLeft', 'ArrowRight'].includes(e.key)
-          )
-            numberOfDay = -numberOfDay;
-
-          // eslint-disable-next-line no-undef
-          let focusedDay: HTMLElement | NodeListOf<HTMLElement> =
-            document.querySelectorAll('.pdp .pdp-day.hover');
-          if (!focusedDay.length) {
-            focusedDay = document.querySelectorAll(
-              '.pdp .pdp-day.start-range,.pdp .pdp-day.end-range',
-            );
-          }
-          focusedDay = focusedDay[focusedDay.length - 1];
-          if (focusedDay) {
-            let column = this.getColumn(focusedDay);
-            focusedDay.classList.remove('hover');
-            const firstColumnMonth = this.onDisplay!.toString();
-            const focusedMonth = this.onDisplay!.clone().addMonth(column);
-            let nextElementValue: PersianDate | number = focusedMonth
-              .date(focusedDay.innerText)
-              .addDay(numberOfDay);
-            if (!this.checkDate(nextElementValue, 'date'))
-              return focusedDay.classList.add('hover');
-            nextElementValue = (nextElementValue as PersianDate).date();
-            column = focusedMonth.diff(firstColumnMonth, 'month');
-            if (column < 0) {
-              this.onDisplay!.subMonth(this.columnCount);
-              column = this.columnCount - 1;
-            } else if (column >= this.columnCount) {
-              this.onDisplay!.addMonth(this.columnCount);
-              column = 0;
-            }
-            await this.$nextTick();
-            focusedDay = document.querySelector(
-              `.pdp .pdp-main .pdp-column[data-column='${column}'] .pdp-day[value='${nextElementValue}']`,
-            ) as HTMLElement;
-            focusedDay.classList.add('hover');
-          } else {
-            focusedDay = document.querySelector(
-              '.pdp .pdp-day:not(.empty):not(.disabled)',
-            ) as HTMLElement;
-            if (focusedDay) focusedDay.classList.add('hover');
-            else {
-              focusedDay = document.querySelector(
-                `.pdp .pdp-main .pdp-column[data-column="0"] .pdp-day[value="${this.fromDate!.date()}"]`,
-              ) as HTMLElement;
-              focusedDay.classList.add('hover');
-            }
-          }
-          if (this.mode === 'range' && this.selectedDates.length == 1) {
-            this.selectInRangeDate({ target: focusedDay });
-          }
-        } else if (e.key == 'Enter') {
-          // 13 is key code of Enter key
-          e.preventDefault();
-          const focusedDay = document.querySelector(
-            '.pdp .pdp-day.hover',
-          ) as HTMLElement;
-          if (focusedDay) {
-            this.selectDate(
-              this.onDisplay!.clone()
-                .addMonth(this.getColumn(focusedDay) || 0)
-                .date(focusedDay.innerText),
-              'date',
-            );
-          } else {
-            let onDisplay;
-            this.displayValue.forEach((value, index) => {
-              if (!value) return false;
-              if (this.type == 'time') {
-                const time = value.split(/[/ -.,:\\]/);
-                if (this.checkDate(this.core.clone(), 'time'))
-                  onDisplay = this.core.clone();
-                else onDisplay = this.fromDate!.clone();
-                onDisplay.time(time as [string]);
-              } else {
-                onDisplay = this.core.clone().parse(value);
-              }
-              if (this.selectDate(onDisplay, 'time') === 0) {
-                const diff = onDisplay.diff(
-                  this.onDisplay as PersianDate,
-                  'month',
-                );
-                if (diff < 0 || diff >= this.columnCount)
-                  this.onDisplay = onDisplay.clone();
-                this.displayValue[index] = '';
-              }
-            });
-          }
-        }
-      },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      selectInRangeDate(e: any): void {
-        const target = e.target;
-        if (!target.classList.contains('pdp-day')) return;
-        document.querySelectorAll(`.pdp .pdp-day`).forEach((el) => {
-          el.classList.remove('in-range');
-        });
-
-        let column = this.getColumn(target);
-        const hoveredDate = this.onDisplay!.clone()
-          .startOf('date')
-          .addMonth(column)
-          .date(target.innerText);
-        const selectedDate = this.selectedDates[0].clone().startOf('date');
-        const number = hoveredDate.isAfter(selectedDate) ? 1 : -1;
-        const selectedDateDOM = document.querySelector(
-          '.pdp-day.start-range,.pdp-day.end-range',
-        ) as HTMLElement;
-        if (selectedDateDOM) {
-          column = +this.getColumn(selectedDateDOM);
-          selectedDateDOM.classList.replace(
-            ...((hoveredDate.isBefore(selectedDate)
-              ? ['start-range', 'end-range']
-              : ['end-range', 'start-range']) as [string, string]),
-          );
-        } else {
-          selectedDate.parse(this.onDisplay as PersianDate);
-          if (number === 1) {
-            selectedDate.startOf('month').subDay();
-            column = -1;
-          } else {
-            selectedDate
-              .addMonth(this.columnCount - 1)
-              .endOf('month')
-              .addDay()
-              .startOf('date');
-            column = this.columnCount;
-          }
-        }
-        while (!hoveredDate.isSame(selectedDate)) {
-          const oldMonth = selectedDate.month();
-          selectedDate.addDay(number);
-          if (oldMonth != selectedDate.month()) {
-            column += number;
-          }
-          if (
-            this.checkDate(selectedDate, 'date') &&
-            !this.isInDisable(selectedDate)
-          ) {
-            document
-              .querySelector(
-                `.pdp-column[data-column='${column}'] .pdp-day[value='${selectedDate.date()}']`,
-              )!
-              .classList.add('in-range');
-          } else {
-            break;
-          }
-        }
-      },
-      submitDate(close = true): void {
-        const displayDate = this.selectedDates.map((el) => {
-          return el.toString(this.formats.input);
-        });
-        if (this.dualInput) this.displayValue = displayDate;
-        else this.displayValue[0] = displayDate.join(' - ');
-
-        this.submitedValue = this.selectedDates.slice();
-        this.setModel();
-        this.$emit(
-          'submit',
-          this.mode === 'range' ? this.selectedDates : this.selectedDates[0],
-        );
-        if (close) {
-          this.showDatePicker = false;
-        }
-      },
-      getColumn({ parentNode }: HTMLElement): number | string {
-        return (parentNode!.parentNode!.parentNode as HTMLElement).dataset
-          .column!;
-      },
-      nearestDate(date: PersianDate): PersianDate {
-        return Math.abs(date.diff(this.fromDate as PersianDate)) <=
-          Math.abs(date.diff(this.toDate as PersianDate))
-          ? this.fromDate!.clone()
-          : this.toDate!.clone();
-      },
-      locate(): void {
-        this.pickerPlace = {
-          top: false,
-          left: false,
-          right: false,
-        };
-        this.$nextTick(() => {
-          const input = (this.$refs.inputs as HTMLElement[])[0];
-          const inputOffset =
-            input.offsetHeight + input.getBoundingClientRect().top;
-          const picker = this.$refs.pdpPicker as HTMLElement;
-          const pickerHeight = picker.offsetHeight + 10;
-          const pickerOffset = picker.getBoundingClientRect();
-          this.pickerPlace = {
-            top:
-              inputOffset >= pickerHeight &&
-              window.innerHeight - (inputOffset + pickerHeight) < 0,
-            left: pickerOffset.left <= 0,
-            right:
-              window.innerWidth - (pickerOffset.left + pickerOffset.width) <= 0,
-          };
-        });
-      },
-      changeLocale(): void {
-        const locales = this.locale.split(',');
-        const index = locales.indexOf(this.currentLocale);
-        this.currentLocale = locales[index + 1] || locales[0];
-        const calendar = this.lang.calendar;
-        this.core.calendar(calendar);
-        this.fromDate!.calendar(calendar);
-        this.toDate!.calendar(calendar);
-        this.onDisplay!.calendar(calendar);
-        for (const date of this.selectedDates) {
-          date.calendar(calendar);
-        }
-        this.submitDate(false);
-      },
-      clear(inputName: Inputs): void {
-        const inputIndex = inputName === 'firstInput' ? 0 : 1;
-
-        this.displayValue[inputIndex] = '';
-        this.$emit('clear');
-        if (this.dualInput) {
-          const values = this.$attrs.value;
-          if (values && Array.isArray(values))
-            return this.setModel(
-              values.map((val, i) => (i == inputIndex ? null : val)),
-            );
-        }
-        this.setModel('');
-      },
-      startChangeTime(
-        timeIndex: number,
-        unit: 'minute' | 'hour',
-        operator: 'add' | 'sub',
-      ) {
-        let time = this.selectedTimes[timeIndex];
-        if (!time) {
-          time = this.core.clone();
-          if (!this.checkDate(time, 'time')) {
-            time = this.toDate!.clone()
-              .subDay()
-              .time(this.core as PersianDate);
-          }
-          if (timeIndex == 1 && !this.selectedTimes.length)
-            this.selectedTimes.push(time.clone());
-          this.selectedTimes.push(time);
-        }
-        this.stopChangeTime();
-        const maxAmount = unit == 'hour' ? 23 : 59;
-        let currentAmount = time[unit]();
-        const changeTime = () => {
-          if (operator == 'add') {
-            currentAmount++;
-            if (currentAmount > maxAmount) currentAmount = 0;
-          } else {
-            currentAmount--;
-            if (currentAmount < 0) currentAmount = maxAmount;
-          }
-          if (!this.checkDate(time[unit](currentAmount), 'time')) {
-            time.parse(
-              time.isSameOrAfter(this.toDate!.clone())
-                ? this.toDate!.clone()
-                : this.fromDate!.clone(),
-            );
-          } else if (
-            this.selectedTimes.length == 2 &&
-            this.selectedTimes[0].isAfter(this.selectedTimes[1] as PersianDate)
-          ) {
-            time.parse(
-              (timeIndex == 0
-                ? this.selectedTimes[1]
-                : this.selectedTimes[0]) as PersianDate,
-            );
-          }
-          if (!this.isInDisable(time as PersianDate)) {
-            if (this.type == 'time') {
-              this.selectedDates[timeIndex] = time;
-            } else if (this.selectedDates[timeIndex]) {
-              this.selectedDates[timeIndex].time(time as PersianDate);
-            }
-            this.$emit('select', time);
-            if (
-              this.autoSubmit &&
-              !this.selectedTimes.some((sTime) =>
-                this.isInDisable(sTime as PersianDate),
-              )
-            )
-              this.submitDate(false);
-          }
-        };
-        changeTime();
-        this.interval = setInterval(changeTime, 100);
-      },
-      stopChangeTime() {
-        clearInterval(this.interval!);
-      },
-      selectShorcut(dates: PersianDate[]) {
-        this.selectedDates = dates.map((date, i) => {
-          if (i == 0) this.onDisplay = date.clone();
-          this.$emit('select', date);
-          return date.clone();
-        });
-        if (this.autoSubmit) {
-          this.submitDate();
-        }
-      },
-      setDate(dates: string | string[]) {
-        if (!dates) return;
-        if (this.mode == 'single' && typeof dates === 'string') dates = [dates];
-        this.selectedDates = [];
-        (dates as string[]).some((d, index) => {
-          const date = this.core
-            .clone()
-            .fromGregorian(
-              (this.type == 'time'
-                ? this.core.toString('YYYY-MM-DD') + ' '
-                : '') + d,
-            );
-          if (Core.isPersianDate(date)) {
-            this.selectedDates.push(date.clone());
-            this.selectedTimes.push(date.clone());
-            if (index == 0) this.onDisplay = date.clone();
-          } else {
-            this.selectedDates = this.selectedTimes = [];
-            return true;
-          }
-        });
-        if (this.selectedDates.length) this.submitDate();
-      },
-    },
-  });
-</script>
 
 <style lang="scss">
   @use './assets/sass/app.scss';
