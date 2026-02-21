@@ -92,3 +92,28 @@ export interface DatePickerProps {
   // used as a forwarded attribute (alt-name) in the template
   altName?: string;
 }
+
+/**
+ * Props that are always present because DatePicker.vue supplies them via
+ * `withDefaults`. The composable receives the already-defaulted props object,
+ * so these can be treated as required here.
+ */
+type DefaultedProps =
+  | 'type'
+  | 'show'
+  | 'clickOn'
+  | 'modal'
+  | 'column'
+  | 'autoSubmit'
+  | 'mode'
+  | 'locale'
+  | 'clearable'
+  | 'dualInput'
+  | 'iconInside'
+  | 'shortcut';
+
+export type DatePickerPropsWithDefaults = Omit<
+  DatePickerProps,
+  DefaultedProps
+> &
+  Required<Pick<DatePickerProps, DefaultedProps>>;
