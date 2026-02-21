@@ -1,5 +1,8 @@
 <script setup lang="ts">
   import type { Langs, PickerType } from '../../types';
+  import LocaleToggle from './components/LocaleToggle.vue';
+  import MonthYearLabel from './components/MonthYearLabel.vue';
+  import NavArrow from './components/NavArrow.vue';
 
   interface HeaderColumn {
     monthLabel: string;
@@ -27,55 +30,42 @@
 
 <template>
   <div v-if="type.includes('date')" class="pdp-header">
-    <div v-if="locale.includes(',')" class="top">
-      <div>{{ lang.translations.text }}</div>
-      <button type="button" :tabindex="tabIndex" @click="emit('change-locale')">
-        {{ nextLocale }}
-      </button>
-    </div>
+    <LocaleToggle
+      v-if="locale.includes(',')"
+      :text="lang.translations.text"
+      :next-locale="nextLocale"
+      :tab-index="tabIndex"
+      @change-locale="emit('change-locale')"
+    />
 
     <div class="bottom">
-      <button
-        tabindex="-1"
-        type="button"
-        :class="['pdp-arrow', { disabled: !canGoPrevMonth }]"
+      <NavArrow
+        direction="prev"
+        :disabled="!canGoPrevMonth"
         :title="lang.translations.prevMonth"
         @click="emit('change-month', 'sub')"
       >
         <slot name="right-arrow"></slot>
-      </button>
+      </NavArrow>
 
       <div>
-        <div v-for="(column, i) in columns" :key="i">
-          <button
-            class="pdp-month"
-            type="button"
-            tabindex="-1"
-            @click="emit('show-part', 'month')"
-          >
-            {{ column.monthLabel }}
-          </button>
-
-          <button
-            class="pdp-year"
-            type="button"
-            tabindex="-1"
-            @click="emit('show-part', 'year')"
-          >
-            {{ column.year }}
-          </button>
-        </div>
+        <MonthYearLabel
+          v-for="(column, i) in columns"
+          :key="i"
+          :month-label="column.monthLabel"
+          :year="column.year"
+          @show-part="emit('show-part', $event)"
+        />
       </div>
 
-      <button
-        tabindex="-1"
-        type="button"
-        :class="['pdp-arrow', { disabled: !canGoNextMonth }]"
+      <NavArrow
+        direction="next"
+        :disabled="!canGoNextMonth"
         :title="lang.translations.nextMonth"
         @click="emit('change-month', 'add')"
       >
         <slot name="left-arrow"></slot>
-      </button>
+      </NavArrow>
     </div>
   </div>
 </template>

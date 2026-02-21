@@ -19,9 +19,9 @@
   import { useDatePicker } from './useDatePicker';
 
   // ************************ Components ************************
-  import PDPArrow from './utils/components/PDPArrow.vue';
-  import PDPIcon from './utils/components/PDPIcon.vue';
-  import PDPAlt from './utils/components/PDPAlt.vue';
+  import PDPArrow from './ui-components/PDPArrow.vue';
+  import PDPIcon from './ui-components/PDPIcon.vue';
+  import PDPAlt from './ui-components/PDPAlt.vue';
   import DatePickerHeader from './ui-components/header/header.vue';
   import DatePickerMain from './ui-components/main/main.vue';
   import DatePickerFooter from './ui-components/footer/footer.vue';

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+  import SelectedRange from './components/SelectedRange.vue';
+  import FooterActions from './components/FooterActions.vue';
+
   defineProps<{
     startText: string | null;
     endText: string | null;
@@ -17,34 +20,18 @@
 
 <template>
   <div class="pdp-footer">
-    <div>
-      <slot name="footer"></slot>
-      <small v-if="startText">
-        {{ startText }}
-      </small>
-      <small v-if="endText"> - {{ endText }} </small>
-    </div>
+    <SelectedRange :start-text="startText" :end-text="endText">
+      <template #footer><slot name="footer"></slot></template>
+    </SelectedRange>
 
-    <div>
-      <button
-        v-if="canGoToday"
-        class="pdp-today"
-        type="button"
-        :tabindex="tabIndex"
-        @click="emit('go-today')"
-      >
-        {{ nowLabel }}
-      </button>
-
-      <button
-        v-if="canSubmit"
-        class="pdp-submit"
-        type="button"
-        :tabindex="tabIndex"
-        @click="emit('submit')"
-      >
-        {{ submitLabel }}
-      </button>
-    </div>
+    <FooterActions
+      :tab-index="tabIndex"
+      :can-go-today="canGoToday"
+      :can-submit="canSubmit"
+      :now-label="nowLabel"
+      :submit-label="submitLabel"
+      @go-today="emit('go-today')"
+      @submit="emit('submit')"
+    />
   </div>
 </template>
