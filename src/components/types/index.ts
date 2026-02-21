@@ -27,6 +27,9 @@ export type {
   PickerPlace,
   Inputs,
   Disable,
+  PersianDate,
+  LocaleDate,
+  SubmitPayload,
 } from '../utils/modules/types';
 
 export type PickerType = 'date' | 'time' | 'datetime';
@@ -53,26 +56,26 @@ export interface DatePickerProps {
   inputFormat?: string;
   displayFormat?: string;
 
-  type: PickerType;
+  type?: PickerType;
 
   from?: string;
   to?: string;
 
-  show: boolean;
+  show?: boolean;
 
-  clickOn: ClickOn;
-  modal: boolean;
+  clickOn?: ClickOn;
+  modal?: boolean;
 
   label?: string;
 
-  column: ColumnProp;
+  column?: ColumnProp;
 
-  autoSubmit: boolean;
-  mode: Mode;
+  autoSubmit?: boolean;
+  mode?: Mode;
 
-  locale: string;
+  locale?: 'fa' | 'en';
 
-  clearable: boolean;
+  clearable?: boolean;
 
   disable?: Disable;
 
@@ -81,8 +84,11 @@ export interface DatePickerProps {
 
   color?: Color;
 
-  dualInput: boolean;
-  iconInside: boolean;
+  dualInput?: boolean;
+  iconInside?: boolean;
 
-  shortcut: boolean | Shortcuts;
+  shortcut?: boolean | Shortcuts;
+
+  // used as a forwarded attribute (alt-name) in the template
+  altName?: string;
 }

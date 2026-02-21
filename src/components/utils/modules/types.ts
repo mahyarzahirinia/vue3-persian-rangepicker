@@ -1,13 +1,12 @@
-import type PersianDate from '@alireza-ab/persian-date/typings/PersianDate';
-export { PersianDate };
+import type PersianDateLib from '@alireza-ab/persian-date';
+export type PersianDate = PersianDateLib;
 
 export type Obj<
   T = unknown,
   U extends string | number | symbol = string,
 > = Record<U, T>;
 export type StrOrRegex = string | RegExp;
-export type FixedSizeArray<T, N extends number> = {
-  [n: number]: T;
+export type FixedSizeArray<T, N extends number> = readonly T[] & {
   length: N;
 };
 export type RecursivePartial<T> = {
@@ -39,20 +38,17 @@ export type Attrs = {
   firstInput: Obj<string>;
   secondInput: Obj<string>;
 };
-export type MonthDays = Obj<
-  {
-    empty?: boolean;
-    friday?: boolean;
-    raw?: PersianDate;
-    startRange?: boolean;
-    endRange?: boolean;
-    inRange?: boolean;
-    disabled?: boolean;
-    today?: boolean;
-    val?: number;
-  },
-  number
->;
+export type MonthDays = {
+  empty?: boolean;
+  friday?: boolean;
+  raw?: PersianDate;
+  startRange?: boolean;
+  endRange?: boolean;
+  inRange?: boolean;
+  disabled?: boolean;
+  today?: boolean;
+  val?: number;
+};
 export type Months = Obj<
   {
     label: string;
@@ -134,3 +130,9 @@ export type Disable =
   | StrOrRegex
   | StrOrRegex[]
   | ((date: PersianDate) => boolean);
+
+/** Date in current locale/calendar (jalali or gregorian). Same as PersianDate. */
+export type LocaleDate = PersianDate;
+
+/** Payload emitted on submit: single date or range (array). */
+export type SubmitPayload = PersianDate | PersianDate[];

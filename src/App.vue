@@ -3,7 +3,15 @@
 </script>
 
 <template>
-  <DatePicker alt-name="rest"></DatePicker>
+  <div style="display: flex; justify-content: center; align-items: center">
+    <DatePicker
+      color="gray"
+      mode="single"
+      locale="en"
+      alt-name="rest"
+      style="width: 300px"
+    ></DatePicker>
+  </div>
 </template>
 
 <style>

@@ -44,12 +44,17 @@
     Mode,
     Color,
     PickerType,
+    SubmitPayload,
+    PersianDate as PersianDateType,
   } from './types';
 
   // ************************ Components ************************
   import PDPArrow from './utils/components/PDPArrow.vue';
   import PDPIcon from './utils/components/PDPIcon.vue';
   import PDPAlt from './utils/components/PDPAlt.vue';
+  import DatePickerHeader from './ui-components/header/header.vue';
+  import DatePickerMain from './ui-components/main/main.vue';
+  import DatePickerFooter from './ui-components/footer/footer.vue';
 
   defineOptions({
     name: 'ZahiriniyaRangePicker',
@@ -75,7 +80,7 @@
     (e: 'open'): void;
     (e: 'close'): void;
     (e: 'select', date: PersianDate): void;
-    (e: 'submit', date: PersianDate | PersianDate[]): void;
+    (e: 'submit', payload: SubmitPayload): void;
     (e: 'clear'): void;
     (
       e: 'update:modelValue',
@@ -106,7 +111,7 @@
   const toDate = ref<PersianDate | undefined>(undefined);
 
   const selectedDates = ref<PersianDate[]>([]);
-  const selectedTimes = ref<PersianDate[]>([]);
+  const selectedTimes = ref<PersianDateType[]>([]);
 
   const showDatePicker = ref<boolean>(false);
   const showYearSelect = ref<boolean>(false);
@@ -130,7 +135,7 @@
   const currentLocale = ref<string>(props.locale.split(',')[0]);
 
   const interval = ref<ReturnType<typeof setInterval> | null>(null);
-  const submitedValue = ref<PersianDate[]>([]);
+  const submittedValue = ref<PersianDate[]>([]);
 
   // -------------------- derived defaults --------------------
   const effectiveFrom = computed<string>(() => {
@@ -220,7 +225,7 @@
     return col;
   });
 
-  // side-effect: time scale css var
+  // side-effect: timescale css var
   watchEffect(() => {
     if (!root.value) return;
     if (!props.type.includes('time')) return;
@@ -335,6 +340,11 @@
     return langs.value[locale].translations.label;
   });
 
+  /** Expose selected times with stable type for child (locale-aware dates). */
+  const selectedTimesList = computed<PersianDateType[]>(
+    () => selectedTimes.value as PersianDateType[],
+  );
+
   const formats = computed<Formats>(() => {
     const displayFormatMap: Obj<string, TypePart | 'datetime'> = {
       date: '?D ?MMMM',
@@ -432,6 +442,72 @@
 
     return out;
   });
+
+  interface HeaderColumn {
+    monthLabel: string;
+    year: number;
+  }
+
+  const canGoPrevMonth = computed<boolean>(() => {
+    if (!onDisplay.value) return false;
+    return checkDate(onDisplay.value.clone().subMonth(), 'month');
+  });
+
+  const canGoNextMonth = computed<boolean>(() => {
+    if (!onDisplay.value) return false;
+    return checkDate(onDisplay.value.clone().addMonth(), 'month');
+  });
+
+  const headerColumns = computed<HeaderColumn[]>(() => {
+    if (!onDisplay.value) return [];
+
+    const cols: HeaderColumn[] = [];
+    for (let i = 0; i < columnCount.value; i++) {
+      const date = onDisplay.value.clone().addMonth(i);
+      const month = months.value[date.month()];
+      cols.push({
+        monthLabel: month ? month.label : '',
+        year: date.year(),
+      });
+    }
+
+    return cols;
+  });
+
+  const langWeekdays = computed<string[]>(() => [...lang.value.weekdays]);
+
+  const timeDisabled = computed<boolean[]>(() => {
+    const count = props.mode === 'range' ? 2 : 1;
+    const result: boolean[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const time = selectedTimes.value[i];
+      result[i] =
+        !!time &&
+        (!checkDate(time, 'time') || isInDisable(time as PersianDate));
+    }
+
+    return result;
+  });
+
+  const footerStartText = computed<string | null>(() => {
+    if (!selectedDates.value[0]) return null;
+    return selectedDates.value[0].toString(formats.value.display);
+  });
+
+  const footerEndText = computed<string | null>(() => {
+    if (selectedDates.value.length !== 2 || !selectedDates.value[1])
+      return null;
+    return selectedDates.value[1].toString(formats.value.display);
+  });
+
+  const canGoToday = computed<boolean>(() => checkDate(core.value, 'date'));
+
+  const canSubmit = computed<boolean>(
+    () =>
+      !props.autoSubmit &&
+      !selectedDates.value.some((d) => isInDisable(d as PersianDate)),
+  );
 
   // -------------------- watchers --------------------
   watch(
@@ -621,7 +697,7 @@
     showYearSelect.value = false;
   }
 
-  function validate(date: PersianDate, part: TypePart): boolean {
+  function validate(date: unknown, part: TypePart): boolean {
     if (!checkDate(date, part) || isInDisable(date)) return false;
     return true;
   }
@@ -713,8 +789,9 @@
       }
 
       if (selectedDates.value.length === 2) {
-        pdpMain.value?.removeEventListener('mouseover', (e) =>
-          selectInRangeDate({ target: e.target }),
+        pdpMain.value?.removeEventListener(
+          'mouseover',
+          selectInRangeDate as never,
         );
       }
     }
@@ -834,14 +911,15 @@
     return d.isBetween(from, to, '[]');
   }
 
-  function isInDisable(date: PersianDate, disable?: Disable): boolean {
+  function isInDisable(date: unknown, disable?: Disable): boolean {
     if (!props.disable) return false;
 
     const dis: Disable = disable ?? props.disable;
 
-    const d = Core.isPersianDate(date)
-      ? date.clone()
-      : core.value.clone().parse(date);
+    const base = Core.isPersianDate(date)
+      ? (date as PersianDate).clone()
+      : core.value.clone().parse(date as PersianDate);
+    const d = base as PersianDate;
 
     if (Core.isString(dis)) {
       const s = props.type === 'time' ? `${d.toString()} ${dis}` : dis;
@@ -1039,11 +1117,11 @@
     }
   }
 
-  function selectInRangeDate(e: { target: HTMLElement }): void {
+  function selectInRangeDate(e: { target: EventTarget | null }): void {
     if (!onDisplay.value || selectedDates.value.length === 0) return;
 
-    const target = e.target;
-    if (!target.classList.contains('pdp-day')) return;
+    const target = e.target as HTMLElement | null;
+    if (!target || !target.classList.contains('pdp-day')) return;
 
     document.querySelectorAll<HTMLElement>('.pdp .pdp-day').forEach((el) => {
       el.classList.remove('in-range');
@@ -1070,7 +1148,7 @@
         : (['end-range', 'start-range'] as const);
       selectedDateDOM.classList.replace(pair[0], pair[1]);
     } else {
-      selectedDate.parse(onDisplay.value);
+      selectedDate.parse(onDisplay.value as unknown as PersianDate);
 
       if (number === 1) {
         selectedDate.startOf('month').subDay();
@@ -1109,13 +1187,12 @@
     if (props.dualInput) displayValue.value = displayDate;
     else displayValue.value[0] = displayDate.join(' - ');
 
-    submitedValue.value = selectedDates.value.slice();
+    submittedValue.value = selectedDates.value.slice() as PersianDate[];
 
     setModel();
-    emit(
-      'submit',
-      props.mode === 'range' ? selectedDates.value : selectedDates.value[0],
-    );
+    const submitPayload =
+      props.mode === 'range' ? selectedDates.value : selectedDates.value[0]!;
+    emit('submit', submitPayload as SubmitPayload);
 
     if (close) showDatePicker.value = false;
   }
@@ -1126,10 +1203,11 @@
     return col ?? 0;
   }
 
-  function nearestDate(date: PersianDate): PersianDate {
-    if (!fromDate.value || !toDate.value) return date;
-    return Math.abs(date.diff(fromDate.value)) <=
-      Math.abs(date.diff(toDate.value))
+  function nearestDate(date: unknown): PersianDate {
+    if (!fromDate.value || !toDate.value) return date as PersianDate;
+    const d = date as PersianDate;
+    return Math.abs(d.diff(fromDate.value as PersianDate)) <=
+      Math.abs(d.diff(toDate.value as PersianDate))
       ? fromDate.value.clone()
       : toDate.value.clone();
   }
@@ -1255,12 +1333,12 @@
 
       if (!isInDisable(time)) {
         if (props.type === 'time') {
-          selectedDates.value[timeIndex] = time;
+          selectedDates.value[timeIndex] = time as PersianDate;
         } else if (selectedDates.value[timeIndex]) {
-          selectedDates.value[timeIndex].time(time);
+          selectedDates.value[timeIndex].time(time as PersianDate);
         }
 
-        emit('select', time);
+        emit('select', time as PersianDate);
 
         if (
           props.autoSubmit &&
@@ -1356,13 +1434,13 @@
           :key="`icon-${input}`"
           :class="[
             'pdp-icon',
-            { 'pdp-pointer': ['all', 'icon'].includes(clickOn) },
+            { 'pdp-pointer': ['all', 'icon'].includes(props.clickOn) },
             { 'pdp-inside': iconInside },
           ]"
           @click="showPicker('icon', index as 0 | 1)"
         >
           <slot name="icon">
-            <PDPIcon :icon="type" width="23" height="23"></PDPIcon>
+            <PDPIcon :icon="props.type" width="23" height="23"></PDPIcon>
           </slot>
         </div>
 
@@ -1394,7 +1472,7 @@
       v-if="attrs.alt.name"
       :name="attrs.alt.name"
       :format="formats.alt"
-      :dates="submitedValue"
+      :dates="submittedValue"
     />
 
     <div v-if="showDatePicker">
@@ -1402,7 +1480,7 @@
 
       <div v-bind="attrs.picker" ref="pdpPicker">
         <div class="pdp-auto">
-          <div v-if="type.includes('date')">
+          <div v-if="props.type.includes('date')">
             <ul v-show="showMonthSelect" class="pdp-select-month">
               <li
                 v-for="(month, index) in months"
@@ -1411,7 +1489,7 @@
                   { selected: month.selected },
                   { disabled: month.disabled },
                 ]"
-                @click="changeSelectedMonth(index)"
+                @click="changeSelectedMonth(Number(index))"
               >
                 {{ month.label }}
               </li>
@@ -1433,265 +1511,89 @@
             </ul>
           </div>
 
-          <div v-if="type.includes('date')" class="pdp-header">
-            <div v-if="locale.includes(',')" class="top">
-              <div>{{ lang.translations.text }}</div>
-              <button type="button" :tabindex="tabIndex" @click="changeLocale">
-                {{ nextLocale }}
-              </button>
-            </div>
+          <DatePickerHeader
+            :type="props.type"
+            :locale="props.locale"
+            :lang="lang"
+            :tabIndex="tabIndex"
+            :nextLocale="nextLocale"
+            :columnCount="columnCount"
+            :canGoPrevMonth="canGoPrevMonth"
+            :canGoNextMonth="canGoNextMonth"
+            :columns="headerColumns"
+            @change-locale="changeLocale"
+            @change-month="changeSelectedMonth"
+            @show-part="showPart"
+          >
+            <template #right-arrow>
+              <slot name="right-arrow">
+                <PDPArrow
+                  direction="right"
+                  width="10"
+                  height="10"
+                  :inverse="lang.dir.picker == 'ltr'"
+                ></PDPArrow>
+              </slot>
+            </template>
 
-            <div class="bottom">
-              <button
-                tabindex="-1"
-                type="button"
-                :class="[
-                  'pdp-arrow',
-                  {
-                    disabled: !checkDate(
-                      onDisplay?.clone().subMonth(),
-                      'month',
-                    ),
-                  },
-                ]"
-                :title="lang.translations.prevMonth"
-                @click="changeSelectedMonth('sub')"
-              >
-                <slot name="right-arrow">
-                  <PDPArrow
-                    direction="right"
-                    width="10"
-                    height="10"
-                    :inverse="lang.dir.picker == 'ltr'"
-                  ></PDPArrow>
-                </slot>
-              </button>
-
-              <div>
-                <div v-for="(item, i) in columnCount" :key="i">
-                  <button
-                    class="pdp-month"
-                    type="button"
-                    tabindex="-1"
-                    @click="showPart('month')"
-                  >
-                    {{ months[onDisplay?.clone().addMonth(i).month()]?.label }}
-                  </button>
-
-                  <button
-                    class="pdp-year"
-                    type="button"
-                    tabindex="-1"
-                    @click="showPart('year')"
-                  >
-                    {{ onDisplay?.clone().addMonth(i).year() }}
-                  </button>
-                </div>
-              </div>
-
-              <button
-                tabindex="-1"
-                type="button"
-                :class="[
-                  'pdp-arrow',
-                  {
-                    disabled: !checkDate(
-                      onDisplay?.clone().addMonth(),
-                      'month',
-                    ),
-                  },
-                ]"
-                :title="lang.translations.nextMonth"
-                @click="changeSelectedMonth('add')"
-              >
-                <slot name="left-arrow">
-                  <PDPArrow
-                    direction="left"
-                    width="10"
-                    height="10"
-                    :inverse="lang.dir.picker == 'ltr'"
-                  ></PDPArrow>
-                </slot>
-              </button>
-            </div>
-          </div>
+            <template #left-arrow>
+              <slot name="left-arrow">
+                <PDPArrow
+                  direction="left"
+                  width="10"
+                  height="10"
+                  :inverse="lang.dir.picker == 'ltr'"
+                ></PDPArrow>
+              </slot>
+            </template>
+          </DatePickerHeader>
 
           <div ref="pdpMain" class="pdp-main">
-            <div v-if="type.includes('date')" class="pdp-date">
-              <div
-                v-for="(item, i) in columnCount"
-                :key="i"
-                class="pdp-column"
-                :data-column="i"
-              >
-                <div class="pdp-week">
-                  <div
-                    v-for="(weekday, index) in lang.weekdays"
-                    :key="index"
-                    class="pdp-weekday"
-                  >
-                    {{ weekday }}
-                  </div>
-                </div>
+            <DatePickerMain
+              :type="props.type"
+              :mode="props.mode"
+              :columnCount="columnCount"
+              :langWeekdays="langWeekdays"
+              :monthDays="monthDays"
+              :selectedTimes="selectedTimesList"
+              :core="core"
+              :timeDisabled="timeDisabled"
+              @select-date="selectDate"
+              @start-change-time="
+                ({ timeIndex, unit, operator }) =>
+                  startChangeTime(timeIndex, unit, operator)
+              "
+              @stop-change-time="stopChangeTime"
+            >
+              <template #up-arrow>
+                <slot name="up-arrow">
+                  <PDPArrow></PDPArrow>
+                </slot>
+              </template>
 
-                <div class="pdp-days">
-                  <div v-for="(week, wIndex) in monthDays[i]" :key="wIndex">
-                    <div
-                      v-for="day in week"
-                      :key="day.raw ? day.raw.toString() : undefined"
-                      :class="[
-                        'pdp-day',
-                        { empty: day.empty },
-                        { friday: day.friday },
-                        { today: day.today },
-                        { 'start-range': day.startRange },
-                        { 'end-range': day.endRange },
-                        { disabled: day.disabled },
-                        { 'in-range': day.inRange },
-                      ]"
-                      :value="day.val"
-                      @click="day.raw && selectDate(day.raw, 'date')"
-                    >
-                      {{ day.val }}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div v-if="type.includes('time')" class="pdp-time inline">
-              <div v-if="type == 'time'" class="pdp-column">
-                <div v-for="(c, i) in columnCount" :key="i"></div>
-              </div>
-
-              <div
-                :class="[
-                  'pdp-moment',
-                  { 'column-direction': mode == 'range' && columnCount == 1 },
-                ]"
-              >
-                <div
-                  v-for="(n, i) in mode == 'range' ? 2 : 1"
-                  :key="n"
-                  :class="[
-                    {
-                      disabled:
-                        selectedTimes[i] &&
-                        (!checkDate(selectedTimes[i], 'time') ||
-                          isInDisable(selectedTimes[i])),
-                    },
-                  ]"
-                >
-                  <div class="hour">
-                    <button
-                      type="button"
-                      @touchstart.prevent="startChangeTime(i, 'hour', 'add')"
-                      @mousedown.prevent="startChangeTime(i, 'hour', 'add')"
-                      @keydown.enter.prevent="startChangeTime(i, 'hour', 'add')"
-                      @touchend.prevent="stopChangeTime"
-                      @mouseup.prevent="stopChangeTime"
-                      @keyup.enter.prevent="stopChangeTime"
-                    >
-                      <slot name="up-arrow"><PDPArrow></PDPArrow></slot>
-                    </button>
-
-                    {{
-                      selectedTimes[i]
-                        ? selectedTimes[i].hour('HH')
-                        : core.hour('HH')
-                    }}
-
-                    <button
-                      type="button"
-                      @touchstart.prevent="startChangeTime(i, 'hour', 'sub')"
-                      @mousedown.prevent="startChangeTime(i, 'hour', 'sub')"
-                      @keydown.enter.prevent="startChangeTime(i, 'hour', 'sub')"
-                      @touchend.prevent="stopChangeTime"
-                      @mouseup.prevent="stopChangeTime"
-                      @keyup.enter.prevent="stopChangeTime"
-                    >
-                      <slot name="down-arrow">
-                        <PDPArrow direction="down"></PDPArrow>
-                      </slot>
-                    </button>
-                  </div>
-
-                  :
-                  <div class="minute">
-                    <button
-                      type="button"
-                      @touchstart.prevent="startChangeTime(i, 'minute', 'add')"
-                      @mousedown.prevent="startChangeTime(i, 'minute', 'add')"
-                      @keydown.enter.prevent="
-                        startChangeTime(i, 'minute', 'add')
-                      "
-                      @touchend.prevent="stopChangeTime"
-                      @mouseup.prevent="stopChangeTime"
-                      @keyup.enter.prevent="stopChangeTime"
-                    >
-                      <slot name="up-arrow"><PDPArrow></PDPArrow></slot>
-                    </button>
-
-                    {{
-                      selectedTimes[i]
-                        ? selectedTimes[i].minute('mm')
-                        : core.minute('mm')
-                    }}
-
-                    <button
-                      type="button"
-                      @touchstart.prevent="startChangeTime(i, 'minute', 'sub')"
-                      @mousedown.prevent="startChangeTime(i, 'minute', 'sub')"
-                      @keydown.enter.prevent="
-                        startChangeTime(i, 'minute', 'sub')
-                      "
-                      @touchend.prevent="stopChangeTime"
-                      @mouseup.prevent="stopChangeTime"
-                      @keyup.enter.prevent="stopChangeTime"
-                    >
-                      <slot name="down-arrow">
-                        <PDPArrow direction="down"></PDPArrow>
-                      </slot>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
+              <template #down-arrow>
+                <slot name="down-arrow">
+                  <PDPArrow direction="down"></PDPArrow>
+                </slot>
+              </template>
+            </DatePickerMain>
           </div>
 
-          <div class="pdp-footer">
-            <div>
+          <DatePickerFooter
+            :startText="footerStartText"
+            :endText="footerEndText"
+            :tabIndex="tabIndex"
+            :canGoToday="canGoToday"
+            :canSubmit="canSubmit"
+            :nowLabel="lang.translations.now"
+            :submitLabel="lang.translations.submit"
+            @go-today="goToToday"
+            @submit="submitDate()"
+          >
+            <template #footer>
               <slot name="footer"></slot>
-              <small v-if="selectedDates[0]">
-                {{ selectedDates[0].toString(formats.display) }}
-              </small>
-              <small v-if="selectedDates.length == 2">
-                - {{ selectedDates[1].toString(formats.display) }}
-              </small>
-            </div>
-
-            <div>
-              <button
-                v-if="checkDate(core, 'date')"
-                class="pdp-today"
-                type="button"
-                :tabindex="tabIndex"
-                @click="goToToday"
-              >
-                {{ lang.translations.now }}
-              </button>
-
-              <button
-                v-if="!autoSubmit && !selectedDates.some((d) => isInDisable(d))"
-                class="pdp-submit"
-                type="button"
-                :tabindex="tabIndex"
-                @click="submitDate()"
-              >
-                {{ lang.translations.submit }}
-              </button>
-            </div>
-          </div>
+            </template>
+          </DatePickerFooter>
         </div>
 
         <ul
