@@ -61,6 +61,7 @@
     inheritAttrs: false,
   });
 
+  // -------------------- props --------------------
   const props = withDefaults(defineProps<DatePickerProps>(), {
     type: 'date',
     show: false,
@@ -76,6 +77,7 @@
     shortcut: false,
   });
 
+  // -------------------- events --------------------
   const emit = defineEmits<{
     (e: 'open'): void;
     (e: 'close'): void;

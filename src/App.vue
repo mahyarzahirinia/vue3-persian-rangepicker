@@ -5,8 +5,9 @@
 <template>
   <div style="display: flex; justify-content: center; align-items: center">
     <DatePicker
+      type="datetime"
       color="gray"
-      mode="single"
+      mode="range"
       locale="en"
       alt-name="rest"
       style="width: 300px"
