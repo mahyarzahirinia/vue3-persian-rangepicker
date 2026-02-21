@@ -833,4 +833,58 @@
     margin: auto;
     position: relative;
   }
+
+  // -------------------- inline mode: beneath and centered --------------------
+  &.pdp-ui-inline {
+    .pdp-picker-inline {
+      left: 50%;
+      transform: translateX(-50%);
+
+      &::after {
+        right: unset;
+        left: 50%;
+        transform: translateX(-50%);
+      }
+    }
+  }
+}
+
+// -------------------- dialog mode (teleported outside .pdp) --------------------
+.pdp-ui-dialog-portal {
+  position: static;
+  // Inherit CSS custom properties from variable defaults so the teleported
+  // picker has the correct theme even though it is outside the .pdp wrapper.
+  --primary-color: #{variable.$primary-color};
+  --secondary-color: #{variable.$secondary-color};
+  --in-range-background: #{variable.$in-range-background};
+  --radius: #{variable.$radius};
+  --text-color: #{variable.$text-color};
+  --hover-color: #{variable.$hover-color};
+  --background: #{variable.$background};
+  --border-color: #{variable.$border-color};
+  --z-index: #{variable.$z-index};
+  --disabled-opacity: #{variable.$disabled-opacity};
+  --icon-background: #{variable.$icon-background};
+  --overlay-color: #{variable.$overlay-color};
+  --main-box-shadow: #{variable.$main-box-shadow};
+  --day-dimensions: #{variable.$day-dimensions};
+  --time-scale: #{variable.$time-scale};
+
+  .pdp-dialog-overlay {
+    background: rgba(0, 0, 0, 0.5) !important;
+  }
+
+  .pdp-picker-dialog {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    animation: startModal 0.15s;
+    z-index: calc(var(--z-index) + 1);
+    margin-top: 0;
+
+    &::after {
+      all: unset !important;
+    }
+  }
 }

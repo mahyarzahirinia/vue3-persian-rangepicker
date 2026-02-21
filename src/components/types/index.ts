@@ -35,6 +35,7 @@ export type {
 export type PickerType = 'date' | 'time' | 'datetime';
 export type ClickOn = 'all' | 'input' | 'icon' | 'none';
 export type Mode = 'single' | 'range';
+export type UiMode = 'inline' | 'dialog';
 export type Color =
   | 'blue'
   | 'red'
@@ -89,6 +90,8 @@ export interface DatePickerProps {
 
   shortcut?: boolean | Shortcuts;
 
+  uiMode?: UiMode;
+
   // used as a forwarded attribute (alt-name) in the template
   altName?: string;
 }
@@ -110,7 +113,8 @@ type DefaultedProps =
   | 'clearable'
   | 'dualInput'
   | 'iconInside'
-  | 'shortcut';
+  | 'shortcut'
+  | 'uiMode';
 
 export type DatePickerPropsWithDefaults = Omit<
   DatePickerProps,

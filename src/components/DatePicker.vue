@@ -7,10 +7,10 @@
    * TODO: refactor and write comment --> pay a high attention
    */
 
-  import { ref, useAttrs } from 'vue';
+  import { ref, useAttrs, computed, watch, nextTick } from 'vue';
 
   // ************************ Core ************************
-  import { PersianDate } from './utils/modules/core';
+  import { PersianDate, Core } from './utils/modules/core';
 
   // ************************ Types ************************
   import type { DatePickerProps, SubmitPayload } from './types';
@@ -45,7 +45,11 @@
     dualInput: false,
     iconInside: false,
     shortcut: false,
+    uiMode: 'inline',
   });
+
+  const isInline = computed(() => props.uiMode === 'inline');
+  const isDialog = computed(() => props.uiMode === 'dialog');
 
   // -------------------- events --------------------
   const emit = defineEmits<{
@@ -74,6 +78,7 @@
   const pdpPicker = ref<HTMLElement | null>(null);
   const pdpSelectYear = ref<HTMLElement | null>(null);
   const pdpMain = ref<HTMLElement | null>(null);
+  const dialogPortal = ref<HTMLElement | null>(null);
 
   const {
     // state
@@ -129,6 +134,37 @@
     { root, inputsRef, pdpPicker, pdpSelectYear, pdpMain },
     rawAttrs,
   );
+
+  // Apply color/styles to the teleported dialog portal so it inherits the theme.
+  function applyThemeToPortal(): void {
+    if (!dialogPortal.value) return;
+    Core.setColor(props.color, dialogPortal.value);
+    Core.setStyles(props.styles, dialogPortal.value);
+  }
+
+  watch(
+    () => showDatePicker.value,
+    (val) => {
+      if (val && isDialog.value) {
+        void nextTick(applyThemeToPortal);
+      }
+    },
+  );
+
+  watch(
+    () => props.color,
+    () => {
+      if (isDialog.value) void nextTick(applyThemeToPortal);
+    },
+  );
+
+  watch(
+    () => props.styles,
+    () => {
+      if (isDialog.value) void nextTick(applyThemeToPortal);
+    },
+    { deep: true },
+  );
 </script>
 
 <script lang="ts">
@@ -143,6 +179,8 @@
       { 'pdp-range': mode === 'range' },
       { 'pdp-modal': modal },
       { 'pdp-dual': dualInput },
+      { 'pdp-ui-inline': isInline },
+      { 'pdp-ui-dialog': isDialog },
       lang.dir.input,
     ]"
   >
@@ -200,149 +238,306 @@
       :dates="submittedValue"
     />
 
-    <div v-if="showDatePicker">
-      <div class="pdp-overlay" @click="showDatePicker = false"></div>
+    <!-- Picker: shown on interaction for all modes -->
+    <template v-if="showDatePicker">
+      <!-- Dialog mode: teleport to body with a centered overlay -->
+      <Teleport v-if="isDialog" to="body">
+        <div
+          ref="dialogPortal"
+          class="pdp pdp-ui-dialog-portal"
+          :class="lang.dir.input"
+        >
+          <div
+            class="pdp-overlay pdp-dialog-overlay"
+            @click="showDatePicker = false"
+          ></div>
+          <div
+            ref="pdpPicker"
+            :class="['pdp-picker', 'pdp-picker-dialog', lang.dir.picker]"
+          >
+            <div class="pdp-auto">
+              <div v-if="props.type.includes('date')">
+                <ul v-show="showMonthSelect" class="pdp-select-month">
+                  <li
+                    v-for="(month, index) in months"
+                    :key="index"
+                    :class="[
+                      { selected: month.selected },
+                      { disabled: month.disabled },
+                    ]"
+                    @click="changeSelectedMonth(Number(index))"
+                  >
+                    {{ month.label }}
+                  </li>
+                </ul>
+                <ul
+                  v-show="showYearSelect"
+                  ref="pdpSelectYear"
+                  class="pdp-select-year"
+                >
+                  <li
+                    v-for="(year, index) in years"
+                    :key="index"
+                    :class="{ selected: onDisplay?.year() == year }"
+                    @click="changeSelectedYear(year)"
+                  >
+                    {{ year }}
+                  </li>
+                </ul>
+              </div>
 
-      <div v-bind="attrs.picker" ref="pdpPicker">
-        <div class="pdp-auto">
-          <div v-if="props.type.includes('date')">
-            <ul v-show="showMonthSelect" class="pdp-select-month">
-              <li
-                v-for="(month, index) in months"
-                :key="index"
-                :class="[
-                  { selected: month.selected },
-                  { disabled: month.disabled },
-                ]"
-                @click="changeSelectedMonth(Number(index))"
+              <DatePickerHeader
+                :type="props.type"
+                :locale="props.locale"
+                :lang="lang"
+                :tabIndex="tabIndex"
+                :nextLocale="nextLocale"
+                :columnCount="columnCount"
+                :canGoPrevMonth="canGoPrevMonth"
+                :canGoNextMonth="canGoNextMonth"
+                :columns="headerColumns"
+                @change-locale="changeLocale"
+                @change-month="changeSelectedMonth"
+                @show-part="showPart"
               >
-                {{ month.label }}
-              </li>
-            </ul>
+                <template #right-arrow>
+                  <slot name="right-arrow">
+                    <PDPArrow
+                      direction="right"
+                      width="10"
+                      height="10"
+                      :inverse="lang.dir.picker == 'ltr'"
+                    ></PDPArrow>
+                  </slot>
+                </template>
+                <template #left-arrow>
+                  <slot name="left-arrow">
+                    <PDPArrow
+                      direction="left"
+                      width="10"
+                      height="10"
+                      :inverse="lang.dir.picker == 'ltr'"
+                    ></PDPArrow>
+                  </slot>
+                </template>
+              </DatePickerHeader>
+
+              <div ref="pdpMain" class="pdp-main">
+                <DatePickerMain
+                  :type="props.type"
+                  :mode="props.mode"
+                  :columnCount="columnCount"
+                  :langWeekdays="langWeekdays"
+                  :monthDays="monthDays"
+                  :selectedTimes="selectedTimesList"
+                  :core="core"
+                  :timeDisabled="timeDisabled"
+                  @select-date="selectDate"
+                  @start-change-time="
+                    ({ timeIndex, unit, operator }) =>
+                      startChangeTime(timeIndex, unit, operator)
+                  "
+                  @stop-change-time="stopChangeTime"
+                >
+                  <template #up-arrow
+                    ><slot name="up-arrow"><PDPArrow></PDPArrow></slot
+                  ></template>
+                  <template #down-arrow
+                    ><slot name="down-arrow"
+                      ><PDPArrow direction="down"></PDPArrow></slot
+                  ></template>
+                </DatePickerMain>
+              </div>
+
+              <DatePickerFooter
+                :startText="footerStartText"
+                :endText="footerEndText"
+                :tabIndex="tabIndex"
+                :canGoToday="canGoToday"
+                :canSubmit="canSubmit"
+                :nowLabel="lang.translations.now"
+                :submitLabel="lang.translations.submit"
+                @go-today="goToToday"
+                @submit="submitDate()"
+              >
+                <template #footer><slot name="footer"></slot></template>
+              </DatePickerFooter>
+            </div>
 
             <ul
-              v-show="showYearSelect"
-              ref="pdpSelectYear"
-              class="pdp-select-year"
+              v-if="shortcuts && Object.keys(shortcuts).length > 0"
+              class="pdp-shortcut"
             >
               <li
-                v-for="(year, index) in years"
-                :key="index"
-                :class="{ selected: onDisplay?.year() == year }"
-                @click="changeSelectedYear(year)"
+                v-for="(dates, name) in shortcuts"
+                :key="name"
+                :class="{
+                  selected: !dates.some(
+                    (date, i) =>
+                      !date.isSame(
+                        selectedDates[i] &&
+                          selectedDates[i].toString('datetime'),
+                      ),
+                  ),
+                }"
+                @click="selectShorcut(dates)"
               >
-                {{ year }}
+                {{ name }}
               </li>
             </ul>
           </div>
+        </div>
+      </Teleport>
 
-          <DatePickerHeader
-            :type="props.type"
-            :locale="props.locale"
-            :lang="lang"
-            :tabIndex="tabIndex"
-            :nextLocale="nextLocale"
-            :columnCount="columnCount"
-            :canGoPrevMonth="canGoPrevMonth"
-            :canGoNextMonth="canGoNextMonth"
-            :columns="headerColumns"
-            @change-locale="changeLocale"
-            @change-month="changeSelectedMonth"
-            @show-part="showPart"
-          >
-            <template #right-arrow>
-              <slot name="right-arrow">
-                <PDPArrow
-                  direction="right"
-                  width="10"
-                  height="10"
-                  :inverse="lang.dir.picker == 'ltr'"
-                ></PDPArrow>
-              </slot>
-            </template>
+      <!-- Inline and default dropdown modes -->
+      <template v-if="!isDialog">
+        <div class="pdp-overlay" @click="showDatePicker = false"></div>
 
-            <template #left-arrow>
-              <slot name="left-arrow">
-                <PDPArrow
-                  direction="left"
-                  width="10"
-                  height="10"
-                  :inverse="lang.dir.picker == 'ltr'"
-                ></PDPArrow>
-              </slot>
-            </template>
-          </DatePickerHeader>
+        <div
+          v-bind="attrs.picker"
+          :class="isInline ? 'pdp-picker-inline' : undefined"
+          ref="pdpPicker"
+        >
+          <div class="pdp-auto">
+            <div v-if="props.type.includes('date')">
+              <ul v-show="showMonthSelect" class="pdp-select-month">
+                <li
+                  v-for="(month, index) in months"
+                  :key="index"
+                  :class="[
+                    { selected: month.selected },
+                    { disabled: month.disabled },
+                  ]"
+                  @click="changeSelectedMonth(Number(index))"
+                >
+                  {{ month.label }}
+                </li>
+              </ul>
 
-          <div ref="pdpMain" class="pdp-main">
-            <DatePickerMain
+              <ul
+                v-show="showYearSelect"
+                ref="pdpSelectYear"
+                class="pdp-select-year"
+              >
+                <li
+                  v-for="(year, index) in years"
+                  :key="index"
+                  :class="{ selected: onDisplay?.year() == year }"
+                  @click="changeSelectedYear(year)"
+                >
+                  {{ year }}
+                </li>
+              </ul>
+            </div>
+
+            <DatePickerHeader
               :type="props.type"
-              :mode="props.mode"
+              :locale="props.locale"
+              :lang="lang"
+              :tabIndex="tabIndex"
+              :nextLocale="nextLocale"
               :columnCount="columnCount"
-              :langWeekdays="langWeekdays"
-              :monthDays="monthDays"
-              :selectedTimes="selectedTimesList"
-              :core="core"
-              :timeDisabled="timeDisabled"
-              @select-date="selectDate"
-              @start-change-time="
-                ({ timeIndex, unit, operator }) =>
-                  startChangeTime(timeIndex, unit, operator)
-              "
-              @stop-change-time="stopChangeTime"
+              :canGoPrevMonth="canGoPrevMonth"
+              :canGoNextMonth="canGoNextMonth"
+              :columns="headerColumns"
+              @change-locale="changeLocale"
+              @change-month="changeSelectedMonth"
+              @show-part="showPart"
             >
-              <template #up-arrow>
-                <slot name="up-arrow">
-                  <PDPArrow></PDPArrow>
+              <template #right-arrow>
+                <slot name="right-arrow">
+                  <PDPArrow
+                    direction="right"
+                    width="10"
+                    height="10"
+                    :inverse="lang.dir.picker == 'ltr'"
+                  ></PDPArrow>
                 </slot>
               </template>
 
-              <template #down-arrow>
-                <slot name="down-arrow">
-                  <PDPArrow direction="down"></PDPArrow>
+              <template #left-arrow>
+                <slot name="left-arrow">
+                  <PDPArrow
+                    direction="left"
+                    width="10"
+                    height="10"
+                    :inverse="lang.dir.picker == 'ltr'"
+                  ></PDPArrow>
                 </slot>
               </template>
-            </DatePickerMain>
+            </DatePickerHeader>
+
+            <div ref="pdpMain" class="pdp-main">
+              <DatePickerMain
+                :type="props.type"
+                :mode="props.mode"
+                :columnCount="columnCount"
+                :langWeekdays="langWeekdays"
+                :monthDays="monthDays"
+                :selectedTimes="selectedTimesList"
+                :core="core"
+                :timeDisabled="timeDisabled"
+                @select-date="selectDate"
+                @start-change-time="
+                  ({ timeIndex, unit, operator }) =>
+                    startChangeTime(timeIndex, unit, operator)
+                "
+                @stop-change-time="stopChangeTime"
+              >
+                <template #up-arrow>
+                  <slot name="up-arrow">
+                    <PDPArrow></PDPArrow>
+                  </slot>
+                </template>
+
+                <template #down-arrow>
+                  <slot name="down-arrow">
+                    <PDPArrow direction="down"></PDPArrow>
+                  </slot>
+                </template>
+              </DatePickerMain>
+            </div>
+
+            <DatePickerFooter
+              :startText="footerStartText"
+              :endText="footerEndText"
+              :tabIndex="tabIndex"
+              :canGoToday="canGoToday"
+              :canSubmit="canSubmit"
+              :nowLabel="lang.translations.now"
+              :submitLabel="lang.translations.submit"
+              @go-today="goToToday"
+              @submit="submitDate()"
+            >
+              <template #footer>
+                <slot name="footer"></slot>
+              </template>
+            </DatePickerFooter>
           </div>
 
-          <DatePickerFooter
-            :startText="footerStartText"
-            :endText="footerEndText"
-            :tabIndex="tabIndex"
-            :canGoToday="canGoToday"
-            :canSubmit="canSubmit"
-            :nowLabel="lang.translations.now"
-            :submitLabel="lang.translations.submit"
-            @go-today="goToToday"
-            @submit="submitDate()"
+          <ul
+            v-if="shortcuts && Object.keys(shortcuts).length > 0"
+            class="pdp-shortcut"
           >
-            <template #footer>
-              <slot name="footer"></slot>
-            </template>
-          </DatePickerFooter>
+            <li
+              v-for="(dates, name) in shortcuts"
+              :key="name"
+              :class="{
+                selected: !dates.some(
+                  (date, i) =>
+                    !date.isSame(
+                      selectedDates[i] && selectedDates[i].toString('datetime'),
+                    ),
+                ),
+              }"
+              @click="selectShorcut(dates)"
+            >
+              {{ name }}
+            </li>
+          </ul>
         </div>
-
-        <ul
-          v-if="shortcuts && Object.keys(shortcuts).length > 0"
-          class="pdp-shortcut"
-        >
-          <li
-            v-for="(dates, name) in shortcuts"
-            :key="name"
-            :class="{
-              selected: !dates.some(
-                (date, i) =>
-                  !date.isSame(
-                    selectedDates[i] && selectedDates[i].toString('datetime'),
-                  ),
-              ),
-            }"
-            @click="selectShorcut(dates)"
-          >
-            {{ name }}
-          </li>
-        </ul>
-      </div>
-    </div>
+      </template>
+    </template>
   </div>
 </template>
 
