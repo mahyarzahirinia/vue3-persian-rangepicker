@@ -16,7 +16,7 @@ import { PersianDate, Core } from './utils/modules/core';
 
 // ************************ Types ************************
 import type {
-  Obj,
+  // Obj,
   Attrs,
   Langs,
   RecursivePartial,
@@ -34,6 +34,7 @@ import type {
   Mode,
   Color,
   PickerType,
+  PickerTypeFormatMap,
   SubmitPayload,
   PersianDate as PersianDateType,
   DatePickerPropsWithDefaults,
@@ -319,12 +320,12 @@ export function useDatePicker(
   );
 
   const formats = computed<Formats>(() => {
-    const displayFormatMap: Obj<string, TypePart | 'datetime'> = {
+    const displayFormatMap: PickerTypeFormatMap = {
       date: '?D ?MMMM',
       datetime: '?D ?MMMM HH:mm',
       time: 'HH:mm',
     };
-    const modelFormatMap: Obj<string, TypePart | 'datetime'> = {
+    const modelFormatMap: PickerTypeFormatMap = {
       date: 'YYYY-MM-DD',
       datetime: 'YYYY-MM-DD HH:mm',
       time: 'HH:mm',

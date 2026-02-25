@@ -37,7 +37,7 @@
     show: false,
     clickOn: 'all',
     modal: false,
-    column: () => ({ 576: 1 }),
+    column: () => ({ 576: 2 }),
     autoSubmit: true,
     mode: 'range',
     locale: 'fa',
@@ -394,9 +394,9 @@
         <div class="pdp-overlay" @click="showDatePicker = false"></div>
 
         <div
+          ref="pdpPicker"
           v-bind="attrs.picker"
           :class="isInline ? 'pdp-picker-inline' : undefined"
-          ref="pdpPicker"
         >
           <div class="pdp-auto">
             <div v-if="props.type.includes('date')">

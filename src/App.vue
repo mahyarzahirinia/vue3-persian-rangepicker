@@ -5,11 +5,13 @@
 <template>
   <div style="display: flex; justify-content: center; align-items: center">
     <DatePicker
+      input-format="jYYYY/jMM/jDD"
+      picker-type="date"
       ui-mode="inline"
-      type="datetime"
+      type="date"
       color="blue"
-      mode="range"
-      locale="en"
+      mode="single"
+      locale="fa"
       alt-name="rest"
       style="width: 300px"
     ></DatePicker>
